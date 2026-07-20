@@ -5,6 +5,7 @@ import handler from "vinext/server/app-router-entry";
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  KAKAO_JAVASCRIPT_KEY?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -28,6 +29,38 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/config/kakao") {
+      if (request.method !== "GET") {
+        return new Response("Method not allowed", {
+          status: 405,
+          headers: { Allow: "GET" },
+        });
+      }
+
+      if (!env.KAKAO_JAVASCRIPT_KEY) {
+        return Response.json(
+          { error: "Kakao Maps is not configured." },
+          {
+            status: 503,
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Content-Type-Options": "nosniff",
+            },
+          },
+        );
+      }
+
+      return Response.json(
+        { javascriptKey: env.KAKAO_JAVASCRIPT_KEY },
+        {
+          headers: {
+            "Cache-Control": "public, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+          },
+        },
+      );
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];

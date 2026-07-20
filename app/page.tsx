@@ -22,6 +22,16 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import type { LayerGroup, Map as LeafletMap } from "leaflet";
+import {
+  loadKakaoMapsSdk,
+  searchKakaoPlaces,
+} from "./kakao-maps";
+import type {
+  KakaoMap,
+  KakaoMapObject,
+  KakaoPlaceResult,
+  KakaoSdk,
+} from "./kakao-maps";
 
 type Coordinates = [number, number];
 
@@ -311,6 +321,82 @@ function getPlaceMatches(query: string) {
   ).slice(0, 5);
 }
 
+function kakaoPlaceToPlace(result: KakaoPlaceResult): Place | null {
+  const latitude = Number(result.y);
+  const longitude = Number(result.x);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  const category = result.category_name
+    .split(" > ")
+    .filter(Boolean)
+    .slice(-2)
+    .join(" · ");
+
+  return {
+    id: `kakao:${result.id}`,
+    name: result.place_name,
+    address: result.road_address_name || result.address_name || "서울",
+    hint: category || "카카오맵 장소",
+    coordinates: [latitude, longitude],
+  };
+}
+
+type PlaceSearchState = {
+  matches: Place[];
+  loading: boolean;
+  source: "kakao" | "static";
+  failed: boolean;
+};
+
+function usePlaceSuggestions(query: string, open: boolean): PlaceSearchState {
+  const fallbackMatches = useMemo(() => getPlaceMatches(query), [query]);
+  const requestIdRef = useRef(0);
+  const [remoteSearch, setRemoteSearch] = useState<{
+    query: string;
+    matches: Place[];
+    failed: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    const normalized = query.trim();
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+
+    if (!open || normalized.length < 2) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void searchKakaoPlaces(normalized)
+        .then((results) => {
+          if (requestId !== requestIdRef.current) return;
+          const places = results
+            .map(kakaoPlaceToPlace)
+            .filter((place): place is Place => place !== null)
+            .filter((place) => place.address.includes("서울"))
+            .slice(0, 5);
+          setRemoteSearch({ query: normalized, matches: places, failed: false });
+        })
+        .catch(() => {
+          if (requestId !== requestIdRef.current) return;
+          setRemoteSearch({ query: normalized, matches: [], failed: true });
+        });
+    }, 280);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [open, query]);
+
+  const normalized = query.trim();
+  const eligible = open && normalized.length >= 2;
+  const currentRemote = remoteSearch?.query === normalized ? remoteSearch : null;
+  const failed = currentRemote?.failed ?? false;
+  const useRemote = eligible && currentRemote !== null && !failed;
+  return {
+    matches: useRemote ? currentRemote.matches : fallbackMatches,
+    loading: eligible && currentRemote === null,
+    source: useRemote ? "kakao" : "static",
+    failed,
+  };
+}
+
 function nearestStartStation(place: Place) {
   return [...STATIONS]
     .filter((station) => station.bikes > 0)
@@ -446,7 +532,8 @@ function PlaceField({
 }: PlaceFieldProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const matches = useMemo(() => getPlaceMatches(query), [query]);
+  const { matches, loading, source, failed } = usePlaceSuggestions(query, open);
+  const boundedActiveIndex = Math.min(activeIndex, Math.max(0, matches.length - 1));
 
   const choose = (place: Place) => {
     onSelect(place);
@@ -473,7 +560,9 @@ function PlaceField({
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={`${id}-suggestions`}
-          aria-activedescendant={open ? `${id}-option-${activeIndex}` : undefined}
+          aria-activedescendant={
+            open && matches.length ? `${id}-option-${boundedActiveIndex}` : undefined
+          }
           autoComplete="off"
           value={query}
           placeholder={placeholder}
@@ -488,15 +577,19 @@ function PlaceField({
             if (!open || matches.length === 0) return;
             if (event.key === "ArrowDown") {
               event.preventDefault();
-              setActiveIndex((index) => Math.min(index + 1, matches.length - 1));
+              setActiveIndex((index) =>
+                Math.min(Math.min(index, matches.length - 1) + 1, matches.length - 1),
+              );
             }
             if (event.key === "ArrowUp") {
               event.preventDefault();
-              setActiveIndex((index) => Math.max(index - 1, 0));
+              setActiveIndex((index) =>
+                Math.max(Math.min(index, matches.length - 1) - 1, 0),
+              );
             }
             if (event.key === "Enter") {
               event.preventDefault();
-              choose(matches[activeIndex]);
+              choose(matches[boundedActiveIndex]);
             }
             if (event.key === "Escape") setOpen(false);
           }}
@@ -520,7 +613,15 @@ function PlaceField({
       {open ? (
         <div className="suggestions" id={`${id}-suggestions`} role="listbox">
           <div className="suggestion-eyebrow">
-            {query ? "검색 결과" : "서울의 인기 장소"}
+            {loading
+              ? "카카오맵에서 검색 중…"
+              : source === "kakao"
+                ? "카카오맵 실제 장소"
+                : failed
+                  ? "데모 장소로 검색 중"
+                  : query
+                    ? "검색 결과"
+                    : "서울의 인기 장소"}
           </div>
           {matches.length ? (
             matches.map((place, index) => (
@@ -529,7 +630,7 @@ function PlaceField({
                 type="button"
                 role="option"
                 aria-selected={selected?.id === place.id}
-                className={`suggestion-item ${index === activeIndex ? "is-active" : ""}`}
+                className={`suggestion-item ${index === boundedActiveIndex ? "is-active" : ""}`}
                 key={place.id}
                 onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActiveIndex(index)}
@@ -549,9 +650,17 @@ function PlaceField({
             ))
           ) : (
             <div className="empty-suggestion">
-              <Search size={18} aria-hidden="true" />
-              <p>일치하는 데모 장소가 없어요.</p>
-              <small>서울의 주요 역·공원·명소를 검색해 보세요.</small>
+              {loading ? (
+                <span className="suggestion-loader" aria-hidden="true" />
+              ) : (
+                <Search size={18} aria-hidden="true" />
+              )}
+              <p>{loading ? "장소를 찾고 있어요." : "서울에서 검색 결과를 찾지 못했어요."}</p>
+              <small>
+                {failed
+                  ? "카카오맵 연결이 지연되어 데모 장소만 확인했어요."
+                  : "건물명, 역명 또는 도로명 주소를 입력해 보세요."}
+              </small>
             </div>
           )}
         </div>
@@ -560,7 +669,58 @@ function PlaceField({
   );
 }
 
-function RouteMap({ plan }: { plan: RoutePlan }) {
+function RouteMapChrome({
+  plan,
+  ready,
+  providerLabel,
+}: {
+  plan: RoutePlan;
+  ready: boolean;
+  providerLabel: string;
+}) {
+  return (
+    <>
+      {!ready ? (
+        <div className="map-loading" role="status">
+          <span className="loading-wheel" aria-hidden="true" />
+          지도를 불러오고 있어요
+        </div>
+      ) : null}
+      <div className="map-tools" aria-label="지도 정보">
+        <span className="live-chip">
+          <span className="live-dot" />
+          {providerLabel}
+        </span>
+        <span className="map-mode">실제 장소 · 예상 경로</span>
+      </div>
+      <div className="map-legend">
+        <div>
+          <span className="legend-line walk" />
+          걷기
+        </div>
+        <div>
+          <span className="legend-line bike" />
+          따릉이
+        </div>
+      </div>
+      <div className="map-station-card">
+        <div className="station-mini-icon">
+          <Bike size={18} aria-hidden="true" />
+        </div>
+        <div>
+          <span>추천 반납 대여소</span>
+          <strong>{plan.endStation.name}</strong>
+        </div>
+        <div className="dock-count">
+          <b>{plan.endStation.docks}</b>
+          <small>빈자리</small>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function LeafletRouteMap({ plan }: { plan: RoutePlan }) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const routeLayerRef = useRef<LayerGroup | null>(null);
@@ -712,42 +872,219 @@ function RouteMap({ plan }: { plan: RoutePlan }) {
   return (
     <div className="map-wrap">
       <div ref={nodeRef} className="map-canvas" aria-label="따라와잉 경로 지도" />
-      {!ready ? (
-        <div className="map-loading" role="status">
-          <span className="loading-wheel" aria-hidden="true" />
-          지도를 불러오고 있어요
-        </div>
-      ) : null}
-      <div className="map-tools" aria-label="지도 정보">
-        <span className="live-chip">
-          <span className="live-dot" />
-          대여소 데모 현황
-        </span>
-        <span className="map-mode">걷기 + 자전거 최적 경로</span>
-      </div>
-      <div className="map-legend">
-        <div>
-          <span className="legend-line walk" />
-          걷기
-        </div>
-        <div>
-          <span className="legend-line bike" />
-          따릉이
-        </div>
-      </div>
-      <div className="map-station-card">
-        <div className="station-mini-icon">
-          <Bike size={18} aria-hidden="true" />
-        </div>
-        <div>
-          <span>추천 반납 대여소</span>
-          <strong>{plan.endStation.name}</strong>
-        </div>
-        <div className="dock-count">
-          <b>{plan.endStation.docks}</b>
-          <small>빈자리</small>
-        </div>
-      </div>
+      <RouteMapChrome plan={plan} ready={ready} providerLabel="대체 지도 · 데모 현황" />
+    </div>
+  );
+}
+
+function KakaoRouteMap({ plan, onError }: { plan: RoutePlan; onError: () => void }) {
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<KakaoMap | null>(null);
+  const sdkRef = useRef<KakaoSdk | null>(null);
+  const mapObjectsRef = useRef<KakaoMapObject[]>([]);
+  const [ready, setReady] = useState(false);
+
+  const clearMapObjects = useCallback(() => {
+    mapObjectsRef.current.forEach((mapObject) => mapObject.setMap(null));
+    mapObjectsRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const mapNode = nodeRef.current;
+    void loadKakaoMapsSdk()
+      .then((sdk) => {
+        if (!active || !mapNode || mapRef.current) return;
+        sdkRef.current = sdk;
+        mapRef.current = new sdk.maps.Map(mapNode, {
+          center: new sdk.maps.LatLng(37.561, 127.006),
+          level: 6,
+        });
+        setReady(true);
+      })
+      .catch(() => {
+        if (active) onError();
+      });
+
+    return () => {
+      active = false;
+      clearMapObjects();
+      if (mapRef.current && sdkRef.current) {
+        sdkRef.current.maps.event.clearInstanceListeners(mapRef.current);
+      }
+      mapRef.current = null;
+      sdkRef.current = null;
+      mapNode?.replaceChildren();
+    };
+  }, [clearMapObjects, onError]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    let animationFrame = 0;
+    const relayoutMap = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => map.relayout());
+    };
+    window.addEventListener("resize", relayoutMap);
+    return () => {
+      window.removeEventListener("resize", relayoutMap);
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, [ready]);
+
+  useEffect(() => {
+    const sdk = sdkRef.current;
+    const map = mapRef.current;
+    if (!ready || !sdk || !map) return;
+
+    clearMapObjects();
+    const toLatLng = ([latitude, longitude]: Coordinates) =>
+      new sdk.maps.LatLng(latitude, longitude);
+    const addPolyline = (
+      coordinates: Coordinates[],
+      color: string,
+      weight: number,
+      style = "solid",
+      opacity = 0.9,
+    ) => {
+      const polyline = new sdk.maps.Polyline({
+        map,
+        path: coordinates.map(toLatLng),
+        strokeWeight: weight,
+        strokeColor: color,
+        strokeOpacity: opacity,
+        strokeStyle: style,
+        zIndex: 2,
+      });
+      mapObjectsRef.current.push(polyline);
+    };
+    const addMarker = (
+      coordinates: Coordinates,
+      label: string,
+      className: string,
+      tooltip: string,
+    ) => {
+      const wrapper = document.createElement("span");
+      wrapper.className = "route-marker-wrapper kakao-route-marker";
+      wrapper.title = tooltip;
+      wrapper.setAttribute("aria-hidden", "true");
+      const marker = document.createElement("span");
+      marker.className = `route-marker ${className}`;
+      marker.textContent = label;
+      wrapper.appendChild(marker);
+      const overlay = new sdk.maps.CustomOverlay({
+        map,
+        position: toLatLng(coordinates),
+        content: wrapper,
+        xAnchor: 0.5,
+        yAnchor: 1,
+        zIndex: 4,
+      });
+      mapObjectsRef.current.push(overlay);
+    };
+
+    const walkTo = createCurve(plan.origin.coordinates, plan.startStation.coordinates, 3);
+    const bike = createCurve(plan.startStation.coordinates, plan.endStation.coordinates, 9);
+    const walkFrom = createCurve(
+      plan.endStation.coordinates,
+      plan.destination.coordinates,
+      3,
+    );
+
+    addPolyline(walkTo, "#3759c7", 5, "shortdash");
+    addPolyline(bike, "#00a77b", 7);
+    addPolyline(bike, "#baf4df", 2, "shortdot", 0.95);
+    addPolyline(walkFrom, "#ef704f", 5, "shortdash");
+
+    addMarker(plan.origin.coordinates, "출", "origin-marker", plan.origin.name);
+    addMarker(plan.startStation.coordinates, "대여", "bike-marker", plan.startStation.name);
+    addMarker(plan.endStation.coordinates, "반납", "return-marker", plan.endStation.name);
+    addMarker(
+      plan.destination.coordinates,
+      "도",
+      "destination-marker",
+      plan.destination.name,
+    );
+
+    plan.alternatives
+      .filter((station) => station.id !== plan.endStation.id)
+      .forEach((station) => {
+        const dot = document.createElement("span");
+        dot.className = "alternative-map-dot";
+        dot.title = `${station.name} · 빈자리 ${station.docks}`;
+        dot.setAttribute("aria-hidden", "true");
+        const overlay = new sdk.maps.CustomOverlay({
+          map,
+          position: toLatLng(station.coordinates),
+          content: dot,
+          xAnchor: 0.5,
+          yAnchor: 0.5,
+          zIndex: 3,
+        });
+        mapObjectsRef.current.push(overlay);
+      });
+
+    const bounds = new sdk.maps.LatLngBounds();
+    [
+      plan.origin.coordinates,
+      plan.startStation.coordinates,
+      plan.endStation.coordinates,
+      plan.destination.coordinates,
+    ].forEach((coordinates) => bounds.extend(toLatLng(coordinates)));
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      map.relayout();
+      map.setBounds(bounds, 110, 90, 90, 80);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      clearMapObjects();
+    };
+  }, [clearMapObjects, plan, ready]);
+
+  return (
+    <div className="map-wrap">
+      <div
+        ref={nodeRef}
+        className="map-canvas kakao-map-canvas"
+        aria-label="카카오맵으로 보는 따라와잉 경로"
+      />
+      <RouteMapChrome plan={plan} ready={ready} providerLabel="카카오맵 실제 지도" />
+    </div>
+  );
+}
+
+function RouteMap({ plan }: { plan: RoutePlan }) {
+  const [provider, setProvider] = useState<"loading" | "kakao" | "leaflet">("loading");
+  const useLeafletFallback = useCallback(() => setProvider("leaflet"), []);
+
+  useEffect(() => {
+    let active = true;
+    void loadKakaoMapsSdk()
+      .then(() => {
+        if (active) setProvider("kakao");
+      })
+      .catch(() => {
+        if (active) setProvider("leaflet");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (provider === "kakao") {
+    return <KakaoRouteMap plan={plan} onError={useLeafletFallback} />;
+  }
+  if (provider === "leaflet") {
+    return <LeafletRouteMap plan={plan} />;
+  }
+
+  return (
+    <div className="map-wrap">
+      <div className="map-canvas" aria-hidden="true" />
+      <RouteMapChrome plan={plan} ready={false} providerLabel="카카오맵 연결 중" />
     </div>
   );
 }
@@ -821,10 +1158,8 @@ export default function Home() {
 
   const commitRoute = useCallback(
     (nextOrigin?: Place | null, nextDestination?: Place | null) => {
-      const resolvedOrigin =
-        nextOrigin ?? origin ?? getPlaceMatches(originQuery)[0] ?? null;
-      const resolvedDestination =
-        nextDestination ?? destination ?? getPlaceMatches(destinationQuery)[0] ?? null;
+      const resolvedOrigin = nextOrigin ?? origin;
+      const resolvedDestination = nextDestination ?? destination;
 
       if (!resolvedOrigin || !resolvedDestination) {
         setErrorMessage("출발지와 도착지를 검색 결과에서 선택해 주세요.");
@@ -846,7 +1181,7 @@ export default function Home() {
       setErrorMessage("");
       setNotice("가장 편한 따릉이 경로를 찾았어요.");
       window.setTimeout(() => setNotice(""), 2800);
-    }, [destination, destinationQuery, origin, originQuery],
+    }, [destination, origin],
   );
 
   const selectOrigin = (place: Place) => {
@@ -900,7 +1235,7 @@ export default function Home() {
     setErrorMessage("");
   };
 
-  const useQuickRoute = (originId: string, destinationId: string) => {
+  const chooseQuickRoute = (originId: string, destinationId: string) => {
     const nextOrigin = PLACES.find((place) => place.id === originId) ?? PLACES[0];
     const nextDestination =
       PLACES.find((place) => place.id === destinationId) ?? PLACES[1];
@@ -924,7 +1259,7 @@ export default function Home() {
         <div className="header-actions">
           <span className="service-badge">
             <span />
-            프로토타입 데모
+            카카오맵 연동 준비
           </span>
           <button className="icon-button" type="button" aria-label="도움말">
             <CircleHelp size={19} aria-hidden="true" />
@@ -1011,7 +1346,7 @@ export default function Home() {
                     <button
                       type="button"
                       key={route.label}
-                      onClick={() => useQuickRoute(route.origin, route.destination)}
+                      onClick={() => chooseQuickRoute(route.origin, route.destination)}
                     >
                       {route.label}
                     </button>
@@ -1023,9 +1358,9 @@ export default function Home() {
             <section className="result-section" aria-labelledby="route-result-title">
               <div className="result-heading">
                 <div>
-                  <span className="result-kicker">추천 경로</span>
+                  <span className="result-kicker">예상 추천 경로</span>
                   <h2 id="route-result-title">
-                    총 <strong>{plan.totalMinutes}분</strong>
+                    약 <strong>{plan.totalMinutes}분</strong>
                   </h2>
                 </div>
                 <div className="result-distance">
@@ -1088,7 +1423,7 @@ export default function Home() {
                     </span>
                     <div>
                       <strong>걸어서 {plan.walkToMinutes}분</strong>
-                      <small>{formatDistance(plan.walkToMeters)} · 평지 위주</small>
+                      <small>{formatDistance(plan.walkToMeters)} · 직선거리 기반 예상</small>
                     </div>
                   </li>
                   <li className="timeline-station">
@@ -1112,7 +1447,7 @@ export default function Home() {
                     </span>
                     <div>
                       <strong>따릉이로 {plan.bikeMinutes}분</strong>
-                      <small>{formatDistance(plan.bikeMeters)} · 자전거도로 우선</small>
+                      <small>{formatDistance(plan.bikeMeters)} · 예상 이동 거리</small>
                     </div>
                   </li>
                   <li className="timeline-station return-station">
@@ -1198,7 +1533,7 @@ export default function Home() {
               <div className="data-note">
                 <LocateFixed size={15} aria-hidden="true" />
                 <span>
-                  대여 가능 수량은 <strong>데모 데이터</strong>예요. 실제 출발 전 따릉이 앱에서 확인해 주세요.
+                  카카오맵 연결 시 장소 검색과 지도는 <strong>실제 데이터</strong>, 따릉이 수량과 경로 시간은 프로토타입 예상치예요. 실제 출발 전 따릉이 앱에서 확인해 주세요.
                   {" "}
                   <a
                     href="https://data.seoul.go.kr/dataList/OA-15493/A/1/datasetView.do"

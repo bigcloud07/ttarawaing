@@ -449,6 +449,17 @@ input:focus-visible {
   margin: 0 auto 5px;
 }
 
+.suggestion-loader {
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: 0 auto 7px;
+  border: 2px solid #c9ddd4;
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 750ms linear infinite;
+}
+
 .empty-suggestion p {
   margin: 0;
   color: #4f5d56;
@@ -1135,8 +1146,16 @@ input:focus-visible {
 }
 
 .route-marker-wrapper {
+  display: block;
+  width: 42px;
+  height: 42px;
   border: 0 !important;
   background: transparent !important;
+}
+
+.kakao-route-marker {
+  line-height: 1;
+  pointer-events: none;
 }
 
 .route-marker {
@@ -1177,6 +1196,17 @@ input:focus-visible {
 
 .route-marker.destination-marker {
   background: var(--coral);
+}
+
+.alternative-map-dot {
+  display: block;
+  width: 15px;
+  height: 15px;
+  border: 3px solid white;
+  border-radius: 50%;
+  background: #71907f;
+  box-shadow: 0 3px 10px rgba(29, 53, 43, 0.24);
+  pointer-events: none;
 }
 
 .leaflet-tooltip {
