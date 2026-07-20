@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LayerGroup, Map as LeafletMap } from "leaflet";
 import {
+  isSupportedPlaceAddress,
   loadKakaoMapsSdk,
   searchKakaoPlaces,
 } from "./kakao-maps";
@@ -305,7 +306,7 @@ function kakaoPlaceToPlace(result: KakaoPlaceResult): Place | null {
   return {
     id: `kakao:${result.id}`,
     name: result.place_name,
-    address: result.road_address_name || result.address_name || "서울",
+    address: result.road_address_name || result.address_name || "주소 정보 없음",
     hint: category || "카카오맵 장소",
     coordinates: [latitude, longitude],
   };
@@ -341,7 +342,7 @@ function usePlaceSuggestions(query: string, open: boolean): PlaceSearchState {
           const places = results
             .map(kakaoPlaceToPlace)
             .filter((place): place is Place => place !== null)
-            .filter((place) => place.address.includes("서울"))
+            .filter((place) => isSupportedPlaceAddress(place.address))
             .slice(0, 5);
           setRemoteSearch({ query: normalized, matches: places, failed: false });
         })
@@ -626,12 +627,12 @@ function PlaceField({
             {loading
               ? "카카오맵에서 검색 중…"
               : source === "kakao"
-                ? "카카오맵 실제 장소"
+                ? "카카오맵 서울·경기 실제 장소"
                 : failed
                   ? "데모 장소로 검색 중"
                   : query
                     ? "검색 결과"
-                    : "서울의 인기 장소"}
+                    : "서울·경기 검색 지원"}
           </div>
           {matches.length ? (
             matches.map((place, index) => (
@@ -665,7 +666,11 @@ function PlaceField({
               ) : (
                 <Search size={18} aria-hidden="true" />
               )}
-              <p>{loading ? "장소를 찾고 있어요." : "서울에서 검색 결과를 찾지 못했어요."}</p>
+              <p>
+                {loading
+                  ? "장소를 찾고 있어요."
+                  : "서울·경기에서 검색 결과를 찾지 못했어요."}
+              </p>
               <small>
                 {failed
                   ? "카카오맵 연결이 지연되어 데모 장소만 확인했어요."

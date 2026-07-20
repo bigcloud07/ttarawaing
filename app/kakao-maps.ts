@@ -215,10 +215,7 @@ export function loadKakaoMapsSdk() {
   return pendingSdk;
 }
 
-export async function searchKakaoPlaces(query: string) {
-  const sdk = await loadKakaoMapsSdk();
-  const keyword = query.includes("서울") ? query : `서울 ${query}`;
-
+function searchKakaoKeyword(sdk: KakaoSdk, keyword: string) {
   return new Promise<KakaoPlaceResult[]>((resolve, reject) => {
     const places = new sdk.maps.services.Places();
     places.keywordSearch(
@@ -241,4 +238,59 @@ export async function searchKakaoPlaces(query: string) {
       },
     );
   });
+}
+
+function buildRegionalKeywords(query: string) {
+  const normalized = query.trim();
+  if (normalized.includes("서울") || normalized.includes("경기")) {
+    return [normalized];
+  }
+  return [`서울 ${normalized}`, `경기 ${normalized}`];
+}
+
+function interleavePlaceResults(groups: KakaoPlaceResult[][]) {
+  const merged: KakaoPlaceResult[] = [];
+  const seenIds = new Set<string>();
+  const longestGroup = Math.max(0, ...groups.map((group) => group.length));
+
+  for (let index = 0; index < longestGroup && merged.length < 10; index += 1) {
+    for (const group of groups) {
+      const result = group[index];
+      if (!result) continue;
+      const resultKey = result.id || `${result.place_name}|${result.x}|${result.y}`;
+      if (seenIds.has(resultKey)) continue;
+      seenIds.add(resultKey);
+      merged.push(result);
+      if (merged.length === 10) break;
+    }
+  }
+  return merged;
+}
+
+export function isSupportedPlaceAddress(address: string) {
+  return /^(서울(?:특별시)?|경기(?:도)?)(?:\s|$)/.test(address.trim());
+}
+
+export async function searchKakaoPlaces(query: string) {
+  const sdk = await loadKakaoMapsSdk();
+  const requests = buildRegionalKeywords(query).map((keyword) =>
+    searchKakaoKeyword(sdk, keyword),
+  );
+  const settledResults = await Promise.allSettled(requests);
+  const successfulGroups = settledResults.flatMap((result) =>
+    result.status === "fulfilled"
+      ? [
+          result.value.filter((place) =>
+            isSupportedPlaceAddress(
+              place.road_address_name || place.address_name || "",
+            ),
+          ),
+        ]
+      : [],
+  );
+
+  if (!successfulGroups.length) {
+    throw new Error("Kakao place search failed.");
+  }
+  return interleavePlaceResults(successfulGroups);
 }

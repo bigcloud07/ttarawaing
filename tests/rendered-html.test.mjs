@@ -79,6 +79,24 @@ test("centers the place-swap control between the two input boxes", async () => {
   assert.doesNotMatch(swapButtonRule, /top:\s*85px/);
 });
 
+test("searches and accepts both Seoul and Gyeonggi Kakao places", async () => {
+  const [pageSource, kakaoSource] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(kakaoSource, /`서울 \$\{normalized\}`/);
+  assert.match(kakaoSource, /`경기 \$\{normalized\}`/);
+  assert.match(kakaoSource, /서울\(\?:특별시\)\?/);
+  assert.match(kakaoSource, /경기\(\?:도\)\?/);
+  assert.match(kakaoSource, /Promise\.allSettled/);
+  assert.match(kakaoSource, /result\.value\.filter/);
+  assert.match(kakaoSource, /result\.id \|\| `\$\{result\.place_name\}/);
+  assert.match(pageSource, /카카오맵 서울·경기 실제 장소/);
+  assert.match(pageSource, /isSupportedPlaceAddress\(place\.address\)/);
+  assert.doesNotMatch(pageSource, /place\.address\.includes\("서울"\)/);
+});
+
 test("uses the current operating-station catalog for the Sadang regression", async () => {
   const catalogUrl = new URL(
     "../app/data/seoul-bike-stations.json",
