@@ -25,6 +25,11 @@ import {
   loadKakaoMapsSdk,
   searchKakaoPlaces,
 } from "./kakao-maps";
+import {
+  createDirectRouteGeometry,
+  createRouteGeometryKey,
+  loadRouteGeometry,
+} from "./route-geometry";
 import stationCatalog from "./data/seoul-bike-stations.json";
 import type {
   KakaoMap,
@@ -32,8 +37,11 @@ import type {
   KakaoPlaceResult,
   KakaoSdk,
 } from "./kakao-maps";
-
-type Coordinates = [number, number];
+import type {
+  Coordinates,
+  RouteGeometry,
+  RouteGeometryInput,
+} from "./route-geometry";
 
 type Place = {
   id: string;
@@ -442,19 +450,71 @@ function formatDistance(meters: number) {
   return `${(meters / 1000).toFixed(1)}km`;
 }
 
-function createCurve(a: Coordinates, b: Coordinates, bends = 5) {
-  const result: Coordinates[] = [];
-  const deltaLat = b[0] - a[0];
-  const deltaLng = b[1] - a[1];
-  for (let index = 0; index <= bends; index += 1) {
-    const t = index / bends;
-    const wave = Math.sin(Math.PI * t) * 0.0022;
-    result.push([
-      a[0] + deltaLat * t + wave * Math.sign(deltaLng || 1),
-      a[1] + deltaLng * t - wave * Math.sign(deltaLat || 1),
-    ]);
+type RouteGeometryStatus = "loading" | "ready" | "partial" | "fallback";
+
+type RouteGeometryState = {
+  key: string;
+  geometry: RouteGeometry;
+  status: RouteGeometryStatus;
+};
+
+function getRouteGeometryStatus(geometry: RouteGeometry): RouteGeometryStatus {
+  const roadSegmentCount = [
+    geometry.walkTo,
+    geometry.bike,
+    geometry.walkFrom,
+  ].filter((segment) => segment.source === "osrm").length;
+
+  if (roadSegmentCount === 3) return "ready";
+  if (roadSegmentCount > 0) return "partial";
+  return "fallback";
+}
+
+function useRouteGeometry(plan: RoutePlan): RouteGeometryState {
+  const input = useMemo<RouteGeometryInput>(
+    () => ({
+      origin: plan.origin.coordinates,
+      startStation: plan.startStation.coordinates,
+      endStation: plan.endStation.coordinates,
+      destination: plan.destination.coordinates,
+    }),
+    [
+      plan.destination.coordinates,
+      plan.endStation.coordinates,
+      plan.origin.coordinates,
+      plan.startStation.coordinates,
+    ],
+  );
+  const key = useMemo(() => createRouteGeometryKey(input), [input]);
+  const directGeometry = useMemo(() => createDirectRouteGeometry(input), [input]);
+  const [state, setState] = useState<RouteGeometryState>(() => ({
+    key,
+    geometry: directGeometry,
+    status: "loading",
+  }));
+
+  useEffect(() => {
+    let active = true;
+
+    void loadRouteGeometry(input)
+      .then((geometry) => {
+        if (!active) return;
+        setState({ key, geometry, status: getRouteGeometryStatus(geometry) });
+      })
+      .catch(() => {
+        if (!active) return;
+        setState({ key, geometry: directGeometry, status: "fallback" });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [directGeometry, input, key]);
+
+  if (state.key !== key) {
+    return { key, geometry: directGeometry, status: "loading" };
   }
-  return result;
+  return state;
 }
 
 type PlaceFieldProps = {
@@ -623,11 +683,22 @@ function RouteMapChrome({
   plan,
   ready,
   providerLabel,
+  geometryStatus,
 }: {
   plan: RoutePlan;
   ready: boolean;
   providerLabel: string;
+  geometryStatus: RouteGeometryStatus;
 }) {
+  const routeModeLabel = {
+    loading: "실제 도로 경로 계산 중",
+    ready: "실제 도보 · 자전거 경로",
+    partial: "도로 경로 · 짧은 구간 보정",
+    fallback: "경로 연결 지연 · 예상선",
+  }[geometryStatus];
+  const hasOpenStreetMapRoute =
+    geometryStatus === "ready" || geometryStatus === "partial";
+
   return (
     <>
       {!ready ? (
@@ -641,7 +712,33 @@ function RouteMapChrome({
           <span className="live-dot" />
           {providerLabel}
         </span>
-        <span className="map-mode">실제 장소 · 예상 경로</span>
+        <span className={`map-mode is-${geometryStatus}`}>{routeModeLabel}</span>
+      </div>
+      <div className={`map-route-source is-${geometryStatus}`}>
+        {hasOpenStreetMapRoute ? (
+          <>
+            <span>경로</span>
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noreferrer"
+            >
+              © OpenStreetMap 기여자
+            </a>
+            <span>·</span>
+            <a
+              href="https://www.openstreetmap.org/fixthemap"
+              target="_blank"
+              rel="noreferrer"
+            >
+              오류 제보
+            </a>
+          </>
+        ) : geometryStatus === "loading" ? (
+          "도로 경로 계산 중"
+        ) : (
+          "예상 연결선으로 표시 중"
+        )}
       </div>
       <div className="map-legend">
         <div>
@@ -670,7 +767,15 @@ function RouteMapChrome({
   );
 }
 
-function LeafletRouteMap({ plan }: { plan: RoutePlan }) {
+function LeafletRouteMap({
+  plan,
+  geometry,
+  geometryStatus,
+}: {
+  plan: RoutePlan;
+  geometry: RouteGeometry;
+  geometryStatus: RouteGeometryStatus;
+}) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const routeLayerRef = useRef<LayerGroup | null>(null);
@@ -730,39 +835,39 @@ function LeafletRouteMap({ plan }: { plan: RoutePlan }) {
           .addTo(group);
       };
 
-      const walkTo = createCurve(plan.origin.coordinates, plan.startStation.coordinates, 3);
-      const bike = createCurve(plan.startStation.coordinates, plan.endStation.coordinates, 9);
-      const walkFrom = createCurve(
-        plan.endStation.coordinates,
-        plan.destination.coordinates,
-        3,
-      );
+      const walkTo = geometry.walkTo.path;
+      const bike = geometry.bike.path;
+      const walkFrom = geometry.walkFrom.path;
+      const bikeIsDirect = geometry.bike.source === "direct";
 
       L.polyline(walkTo, {
         color: "#3759c7",
         weight: 5,
-        opacity: 0.9,
+        opacity: geometry.walkTo.source === "direct" ? 0.5 : 0.9,
         dashArray: "3 9",
         lineCap: "round",
       }).addTo(group);
       L.polyline(bike, {
         color: "#00a77b",
-        weight: 7,
-        opacity: 0.92,
+        weight: bikeIsDirect ? 5 : 7,
+        opacity: bikeIsDirect ? 0.5 : 0.92,
+        dashArray: bikeIsDirect ? "6 10" : undefined,
         lineCap: "round",
         lineJoin: "round",
       }).addTo(group);
-      L.polyline(bike, {
-        color: "#baf4df",
-        weight: 2,
-        opacity: 0.9,
-        dashArray: "1 10",
-        lineCap: "round",
-      }).addTo(group);
+      if (!bikeIsDirect) {
+        L.polyline(bike, {
+          color: "#baf4df",
+          weight: 2,
+          opacity: 0.9,
+          dashArray: "1 10",
+          lineCap: "round",
+        }).addTo(group);
+      }
       L.polyline(walkFrom, {
         color: "#ef704f",
         weight: 5,
-        opacity: 0.9,
+        opacity: geometry.walkFrom.source === "direct" ? 0.5 : 0.9,
         dashArray: "3 9",
         lineCap: "round",
       }).addTo(group);
@@ -808,6 +913,9 @@ function LeafletRouteMap({ plan }: { plan: RoutePlan }) {
         });
 
       const bounds = L.latLngBounds([
+        ...walkTo,
+        ...bike,
+        ...walkFrom,
         plan.origin.coordinates,
         plan.startStation.coordinates,
         plan.endStation.coordinates,
@@ -823,17 +931,32 @@ function LeafletRouteMap({ plan }: { plan: RoutePlan }) {
     return () => {
       active = false;
     };
-  }, [plan, ready]);
+  }, [geometry, plan, ready]);
 
   return (
     <div className="map-wrap">
       <div ref={nodeRef} className="map-canvas" aria-label="따라와잉 경로 지도" />
-      <RouteMapChrome plan={plan} ready={ready} providerLabel="대체 지도 · 운영 대여소" />
+      <RouteMapChrome
+        plan={plan}
+        ready={ready}
+        providerLabel="대체 지도 · 운영 대여소"
+        geometryStatus={geometryStatus}
+      />
     </div>
   );
 }
 
-function KakaoRouteMap({ plan, onError }: { plan: RoutePlan; onError: () => void }) {
+function KakaoRouteMap({
+  plan,
+  geometry,
+  geometryStatus,
+  onError,
+}: {
+  plan: RoutePlan;
+  geometry: RouteGeometry;
+  geometryStatus: RouteGeometryStatus;
+  onError: () => void;
+}) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<KakaoMap | null>(null);
   const sdkRef = useRef<KakaoSdk | null>(null);
@@ -940,18 +1063,33 @@ function KakaoRouteMap({ plan, onError }: { plan: RoutePlan; onError: () => void
       mapObjectsRef.current.push(overlay);
     };
 
-    const walkTo = createCurve(plan.origin.coordinates, plan.startStation.coordinates, 3);
-    const bike = createCurve(plan.startStation.coordinates, plan.endStation.coordinates, 9);
-    const walkFrom = createCurve(
-      plan.endStation.coordinates,
-      plan.destination.coordinates,
-      3,
-    );
+    const walkTo = geometry.walkTo.path;
+    const bike = geometry.bike.path;
+    const walkFrom = geometry.walkFrom.path;
+    const bikeIsDirect = geometry.bike.source === "direct";
 
-    addPolyline(walkTo, "#3759c7", 5, "shortdash");
-    addPolyline(bike, "#00a77b", 7);
-    addPolyline(bike, "#baf4df", 2, "shortdot", 0.95);
-    addPolyline(walkFrom, "#ef704f", 5, "shortdash");
+    addPolyline(
+      walkTo,
+      "#3759c7",
+      5,
+      "shortdash",
+      geometry.walkTo.source === "direct" ? 0.5 : 0.9,
+    );
+    addPolyline(
+      bike,
+      "#00a77b",
+      bikeIsDirect ? 5 : 7,
+      bikeIsDirect ? "shortdash" : "solid",
+      bikeIsDirect ? 0.5 : 0.9,
+    );
+    if (!bikeIsDirect) addPolyline(bike, "#baf4df", 2, "shortdot", 0.95);
+    addPolyline(
+      walkFrom,
+      "#ef704f",
+      5,
+      "shortdash",
+      geometry.walkFrom.source === "direct" ? 0.5 : 0.9,
+    );
 
     addMarker(plan.origin.coordinates, "출", "origin-marker", plan.origin.name);
     addMarker(plan.startStation.coordinates, "대여", "bike-marker", plan.startStation.name);
@@ -987,6 +1125,9 @@ function KakaoRouteMap({ plan, onError }: { plan: RoutePlan; onError: () => void
 
     const bounds = new sdk.maps.LatLngBounds();
     [
+      ...walkTo,
+      ...bike,
+      ...walkFrom,
       plan.origin.coordinates,
       plan.startStation.coordinates,
       plan.endStation.coordinates,
@@ -1002,7 +1143,7 @@ function KakaoRouteMap({ plan, onError }: { plan: RoutePlan; onError: () => void
       window.cancelAnimationFrame(animationFrame);
       clearMapObjects();
     };
-  }, [clearMapObjects, plan, ready]);
+  }, [clearMapObjects, geometry, plan, ready]);
 
   return (
     <div className="map-wrap">
@@ -1011,7 +1152,12 @@ function KakaoRouteMap({ plan, onError }: { plan: RoutePlan; onError: () => void
         className="map-canvas kakao-map-canvas"
         aria-label="카카오맵으로 보는 따라와잉 경로"
       />
-      <RouteMapChrome plan={plan} ready={ready} providerLabel="카카오맵 실제 지도" />
+      <RouteMapChrome
+        plan={plan}
+        ready={ready}
+        providerLabel="카카오맵 실제 지도"
+        geometryStatus={geometryStatus}
+      />
     </div>
   );
 }
@@ -1019,6 +1165,7 @@ function KakaoRouteMap({ plan, onError }: { plan: RoutePlan; onError: () => void
 function RouteMap({ plan }: { plan: RoutePlan }) {
   const [provider, setProvider] = useState<"loading" | "kakao" | "leaflet">("loading");
   const useLeafletFallback = useCallback(() => setProvider("leaflet"), []);
+  const { geometry, status: geometryStatus } = useRouteGeometry(plan);
 
   useEffect(() => {
     let active = true;
@@ -1035,16 +1182,34 @@ function RouteMap({ plan }: { plan: RoutePlan }) {
   }, []);
 
   if (provider === "kakao") {
-    return <KakaoRouteMap plan={plan} onError={useLeafletFallback} />;
+    return (
+      <KakaoRouteMap
+        plan={plan}
+        geometry={geometry}
+        geometryStatus={geometryStatus}
+        onError={useLeafletFallback}
+      />
+    );
   }
   if (provider === "leaflet") {
-    return <LeafletRouteMap plan={plan} />;
+    return (
+      <LeafletRouteMap
+        plan={plan}
+        geometry={geometry}
+        geometryStatus={geometryStatus}
+      />
+    );
   }
 
   return (
     <div className="map-wrap">
       <div className="map-canvas" aria-hidden="true" />
-      <RouteMapChrome plan={plan} ready={false} providerLabel="카카오맵 연결 중" />
+      <RouteMapChrome
+        plan={plan}
+        ready={false}
+        providerLabel="카카오맵 연결 중"
+        geometryStatus={geometryStatus}
+      />
     </div>
   );
 }

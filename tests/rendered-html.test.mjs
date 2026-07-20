@@ -43,10 +43,28 @@ test("server-renders the ttarawaing route planner", async () => {
   assert.doesNotMatch(html, /nmap:\/\/|네이버 지도/);
   assert.match(html, /카카오맵 연동/);
   assert.match(html, /카카오맵 실제 데이터/);
+  assert.match(html, /실제 도로 경로 계산 중/);
+  assert.doesNotMatch(html, /실제 장소 · 예상 경로/);
   assert.match(html, /서울자전거 운영 목록/);
   assert.match(html, /현황 확인 중/);
   assert.doesNotMatch(html, /빈자리 \d+|노들섬 서측 입구/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
+});
+
+test("draws road geometry instead of manufactured map curves", async () => {
+  const [pageSource, routeSource] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/route-geometry.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.doesNotMatch(pageSource, /createCurve/);
+  assert.match(pageSource, /geometry\.bike\.path/);
+  assert.match(pageSource, /openstreetmap\.org\/fixthemap/);
+  assert.match(routeSource, /routing\.openstreetmap\.de/);
+  assert.match(routeSource, /routed-foot/);
+  assert.match(routeSource, /routed-bike/);
+  assert.match(routeSource, /REQUEST_INTERVAL_MS = 1_100/);
+  assert.match(routeSource, /routeRatio > 4/);
 });
 
 test("uses the current operating-station catalog for the Sadang regression", async () => {
