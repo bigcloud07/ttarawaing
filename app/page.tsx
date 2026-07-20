@@ -170,6 +170,92 @@ const STATIONS: Station[] = stationCatalog.stations.map((station) => ({
   bikes: null,
 }));
 
+const BIKE_SEOUL_REALTIME_URL =
+  "https://www.bikeseoul.com/app/station/getStationRealtimeStatus.do";
+
+type RealtimeBikeAvailability = {
+  id: string;
+  availableBikes: number;
+};
+
+function toBikeCount(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function normalizeRealtimeBikeAvailability(payload: unknown): RealtimeBikeAvailability[] {
+  if (!payload || typeof payload !== "object") return [];
+  const body = payload as Record<string, unknown>;
+
+  if (Array.isArray(body.stations)) {
+    return body.stations.flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const station = value as Record<string, unknown>;
+      if (
+        typeof station.id !== "string" ||
+        typeof station.availableBikes !== "number" ||
+        !Number.isFinite(station.availableBikes) ||
+        station.availableBikes < 0
+      ) {
+        return [];
+      }
+      return [{ id: station.id, availableBikes: Math.floor(station.availableBikes) }];
+    });
+  }
+
+  if (!Array.isArray(body.realtimeList)) return [];
+  return body.realtimeList.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const station = value as Record<string, unknown>;
+    const stationName = typeof station.stationName === "string" ? station.stationName : "";
+    const id = stationName.match(/^\s*(\d+)\./)?.[1];
+    if (!id) return [];
+
+    return [
+      {
+        id,
+        availableBikes:
+          toBikeCount(station.parkingBikeTotCnt) +
+          toBikeCount(station.parkingQRBikeCnt) +
+          toBikeCount(station.parkingELECBikeCnt),
+      },
+    ];
+  });
+}
+
+async function fetchRealtimeBikeAvailability(signal: AbortSignal) {
+  const requests = [
+    () =>
+      fetch(BIKE_SEOUL_REALTIME_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        },
+        body: new URLSearchParams({ stationGrpSeq: "ALL" }),
+        signal,
+      }),
+    () =>
+      fetch("/api/bike-stations/realtime", {
+        headers: { Accept: "application/json" },
+        signal,
+      }),
+  ];
+
+  for (const makeRequest of requests) {
+    try {
+      const response = await makeRequest();
+      if (!response.ok) continue;
+      const availability = normalizeRealtimeBikeAvailability(await response.json());
+      if (availability.length >= 2_700) return availability;
+    } catch (error: unknown) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+    }
+  }
+
+  throw new Error("Realtime bike status request failed.");
+}
+
 const QUICK_ROUTES = [
   { label: "망원시장 → 더현대", origin: "mangwon-market", destination: "the-hyundai-seoul" },
   { label: "광화문 → 서울숲", origin: "gwanghwamun", destination: "seoul-forest" },
@@ -986,27 +1072,11 @@ export default function Home() {
   useEffect(() => {
     const controller = new AbortController();
 
-    void fetch("/api/bike-stations/realtime", {
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Realtime bike status request failed.");
-        return response.json() as Promise<{
-          stations?: Array<{ id?: unknown; availableBikes?: unknown }>;
-        }>;
-      })
-      .then((payload) => {
+    void fetchRealtimeBikeAvailability(controller.signal)
+      .then((realtimeAvailability) => {
         const availabilityById = new Map<string, number>();
-        for (const station of payload.stations ?? []) {
-          if (
-            typeof station.id === "string" &&
-            typeof station.availableBikes === "number" &&
-            Number.isFinite(station.availableBikes) &&
-            station.availableBikes >= 0
-          ) {
-            availabilityById.set(station.id, Math.floor(station.availableBikes));
-          }
+        for (const station of realtimeAvailability) {
+          availabilityById.set(station.id, station.availableBikes);
         }
 
         const minimumRealtimeStationCount = Math.floor(STATIONS.length * 0.98);
