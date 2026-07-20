@@ -33,5 +33,9 @@ test("server-renders the ttarawaing route planner", async () => {
   assert.match(html, /최적 경로 찾기/);
   assert.match(html, /망원시장/);
   assert.match(html, /더현대 서울/);
+  assert.match(html, /nmap:\/\/route\/bicycle\?/);
+  assert.match(html, /v1lat=/);
+  assert.match(html, /v2lat=/);
+  assert.match(html, /출발 · 대여 · 반납 · 도착 4개 지점 포함/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
