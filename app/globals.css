@@ -1184,6 +1184,7 @@ input:focus-visible {
 }
 
 .route-marker.origin-marker {
+  width: 42px;
   background: var(--blue);
 }
 
@@ -1198,6 +1199,7 @@ input:focus-visible {
 }
 
 .route-marker.destination-marker {
+  width: 42px;
   background: var(--coral);
 }
 

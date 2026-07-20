@@ -889,7 +889,7 @@ function LeafletRouteMap({
         lineCap: "round",
       }).addTo(group);
 
-      marker(plan.origin.coordinates, "출", "origin-marker", plan.origin.name);
+      marker(plan.origin.coordinates, "출발", "origin-marker", plan.origin.name);
       marker(
         plan.startStation.coordinates,
         "대여",
@@ -904,7 +904,7 @@ function LeafletRouteMap({
       );
       marker(
         plan.destination.coordinates,
-        "도",
+        "도착",
         "destination-marker",
         plan.destination.name,
       );
@@ -1108,12 +1108,12 @@ function KakaoRouteMap({
       geometry.walkFrom.source === "direct" ? 0.5 : 0.9,
     );
 
-    addMarker(plan.origin.coordinates, "출", "origin-marker", plan.origin.name);
+    addMarker(plan.origin.coordinates, "출발", "origin-marker", plan.origin.name);
     addMarker(plan.startStation.coordinates, "대여", "bike-marker", plan.startStation.name);
     addMarker(plan.endStation.coordinates, "반납", "return-marker", plan.endStation.name);
     addMarker(
       plan.destination.coordinates,
-      "도",
+      "도착",
       "destination-marker",
       plan.destination.name,
     );

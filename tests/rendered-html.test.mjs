@@ -82,6 +82,21 @@ test("keeps the place-swap control in flow between the two input boxes", async (
   assert.match(pageSource, /onSwap=\{swapPlaces\}/);
 });
 
+test("uses full start and destination labels on both map providers", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.equal((pageSource.match(/"출발", "origin-marker"/g) ?? []).length, 2);
+  assert.equal(
+    (pageSource.match(/"도착",\s*"destination-marker"/g) ?? []).length,
+    2,
+  );
+  assert.match(styles, /\.route-marker\.origin-marker\s*\{[^}]*width:\s*42px/s);
+  assert.match(styles, /\.route-marker\.destination-marker\s*\{[^}]*width:\s*42px/s);
+});
+
 test("searches and accepts both Seoul and Gyeonggi Kakao places", async () => {
   const [pageSource, kakaoSource] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
