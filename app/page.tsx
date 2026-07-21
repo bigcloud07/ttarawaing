@@ -1220,15 +1220,14 @@ function RouteMap({ plan }: { plan: RoutePlan }) {
 }
 
 export default function Home() {
-  const initialOrigin = PLACES.find((place) => place.id === "mangwon-market") ?? PLACES[0];
-  const initialDestination =
-    PLACES.find((place) => place.id === "the-hyundai-seoul") ?? PLACES[1];
-  const [originQuery, setOriginQuery] = useState(initialOrigin.name);
-  const [destinationQuery, setDestinationQuery] = useState(initialDestination.name);
-  const [origin, setOrigin] = useState<Place | null>(initialOrigin);
-  const [destination, setDestination] = useState<Place | null>(initialDestination);
-  const [committedOrigin, setCommittedOrigin] = useState(initialOrigin);
-  const [committedDestination, setCommittedDestination] = useState(initialDestination);
+  const [originQuery, setOriginQuery] = useState("");
+  const [destinationQuery, setDestinationQuery] = useState("");
+  const [origin, setOrigin] = useState<Place | null>(null);
+  const [destination, setDestination] = useState<Place | null>(null);
+  const [committedRoute, setCommittedRoute] = useState<{
+    origin: Place;
+    destination: Place;
+  } | null>(null);
   const [selectedEndStationId, setSelectedEndStationId] = useState<string>();
   const [alternativesOpen, setAlternativesOpen] = useState(false);
   const [routeDetailsOpen, setRouteDetailsOpen] = useState(true);
@@ -1272,15 +1271,20 @@ export default function Home() {
 
   const plan = useMemo(
     () =>
-      buildPlan(
-        committedOrigin,
-        committedDestination,
-        stations,
-        selectedEndStationId,
-      ),
-    [committedDestination, committedOrigin, selectedEndStationId, stations],
+      committedRoute
+        ? buildPlan(
+            committedRoute.origin,
+            committedRoute.destination,
+            stations,
+            selectedEndStationId,
+          )
+        : null,
+    [committedRoute, selectedEndStationId, stations],
   );
-  const kakaoRouteUrl = useMemo(() => buildKakaoBicycleRouteUrl(plan), [plan]);
+  const kakaoRouteUrl = useMemo(
+    () => (plan ? buildKakaoBicycleRouteUrl(plan) : ""),
+    [plan],
+  );
 
   const commitRoute = useCallback(
     (nextOrigin?: Place | null, nextDestination?: Place | null) => {
@@ -1300,8 +1304,10 @@ export default function Home() {
       setDestination(resolvedDestination);
       setOriginQuery(resolvedOrigin.name);
       setDestinationQuery(resolvedDestination.name);
-      setCommittedOrigin(resolvedOrigin);
-      setCommittedDestination(resolvedDestination);
+      setCommittedRoute({
+        origin: resolvedOrigin,
+        destination: resolvedDestination,
+      });
       setSelectedEndStationId(undefined);
       setAlternativesOpen(false);
       setErrorMessage("");
@@ -1465,7 +1471,8 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="result-section" aria-labelledby="route-result-title">
+            {plan ? (
+              <section className="result-section" aria-labelledby="route-result-title">
               <div className="result-heading">
                 <div>
                   <span className="result-kicker">예상 추천 경로</span>
@@ -1710,12 +1717,26 @@ export default function Home() {
               <p className="kakao-route-note">
                 카카오맵에서는 네 지점을 하나의 자전거 경로로 열어요. 첫·마지막 도보 구간은 따라와잉 안내를 확인해 주세요.
               </p>
-            </section>
+              </section>
+            ) : null}
           </div>
         </aside>
 
-        <section className="map-panel" aria-label="경로 지도">
-          <RouteMap plan={plan} />
+        <section
+          className={`map-panel${plan ? "" : " is-empty"}`}
+          aria-label={plan ? "경로 지도" : "경로 검색 안내"}
+        >
+          {plan ? (
+            <RouteMap plan={plan} />
+          ) : (
+            <div className="map-empty-state">
+              <span className="map-empty-icon">
+                <MapPin size={24} aria-hidden="true" />
+              </span>
+              <strong>출발지와 도착지를 검색해 주세요</strong>
+              <p>장소를 선택하면 따릉이 대여·반납 경로가 지도에 표시돼요.</p>
+            </div>
+          )}
         </section>
       </div>
 

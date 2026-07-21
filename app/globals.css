@@ -1062,6 +1062,48 @@ input:focus-visible {
   background: #e8ede9;
 }
 
+.map-panel.is-empty {
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 52% 44%, rgba(0, 167, 123, 0.1), transparent 27%),
+    linear-gradient(145deg, #f1f6f3 0%, #e6eee9 100%);
+}
+
+.map-empty-state {
+  display: flex;
+  max-width: 360px;
+  align-items: center;
+  padding: 28px;
+  color: #637169;
+  text-align: center;
+  flex-direction: column;
+}
+
+.map-empty-icon {
+  display: grid;
+  width: 50px;
+  height: 50px;
+  margin-bottom: 14px;
+  place-items: center;
+  border-radius: 16px 16px 16px 6px;
+  background: white;
+  color: var(--green);
+  box-shadow: 0 10px 28px rgba(37, 75, 59, 0.11);
+}
+
+.map-empty-state strong {
+  color: #34483f;
+  font-size: 17px;
+  letter-spacing: -0.035em;
+}
+
+.map-empty-state p {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .map-wrap,
 .map-canvas {
   position: absolute;
@@ -1486,6 +1528,12 @@ input:focus-visible {
     order: -1;
     height: 44vh;
     min-height: 350px;
+  }
+
+  .map-panel.is-empty {
+    order: 0;
+    height: 240px;
+    min-height: 240px;
   }
 
   .map-tools {

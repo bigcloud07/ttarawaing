@@ -32,21 +32,17 @@ test("server-renders the ttarawaing route planner", async () => {
   assert.match(html, /<title>따라와잉/);
   assert.match(html, /어디로 따라갈까요/);
   assert.match(html, /최적 경로 찾기/);
-  assert.match(html, /망원시장/);
-  assert.match(html, /더현대 서울/);
-  assert.match(
+  assert.match(html, /출발 장소를 검색해 주세요/);
+  assert.match(html, /도착 장소를 검색해 주세요/);
+  assert.match(html, /장소를 선택하면 따릉이 대여·반납 경로가 지도에 표시돼요/);
+  assert.doesNotMatch(html, /value="망원시장"|value="더현대 서울"/);
+  assert.doesNotMatch(
     html,
-    /https:\/\/map\.kakao\.com\/link\/by\/bicycle\/[^\"]*37\.55605,126\.90523\/[^\"]*37\.55894852,126\.90775299\/[^\"]*37\.52595139,126\.92987061\/[^\"]*37\.52591,126\.92843/,
+    /예상 추천 경로|카카오맵에서 이어보기|카카오맵 실제 데이터|서울자전거 운영 목록/,
   );
-  assert.match(html, /카카오맵에서 이어보기/);
-  assert.match(html, /출발 · 대여 · 반납 · 도착 4개 지점 자동 입력/);
   assert.doesNotMatch(html, /nmap:\/\/|네이버 지도/);
   assert.doesNotMatch(html, /카카오맵 연동|aria-label="도움말"/);
-  assert.match(html, /카카오맵 실제 데이터/);
-  assert.match(html, /실제 도로 경로 계산 중/);
   assert.doesNotMatch(html, /실제 장소 · 예상 경로/);
-  assert.match(html, /서울자전거 운영 목록/);
-  assert.match(html, /현황 확인 중/);
   assert.doesNotMatch(html, /빈자리 \d+|노들섬 서측 입구/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
