@@ -138,15 +138,10 @@ input:focus-visible {
 .section-kicker {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   margin-bottom: 8px;
   color: var(--green-dark);
   font-size: 12px;
   font-weight: 720;
-}
-
-.section-kicker svg {
-  fill: #d3f5e8;
 }
 
 .title-row h1 {

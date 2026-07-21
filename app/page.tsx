@@ -15,7 +15,6 @@ import {
   MapPin,
   Navigation,
   Search,
-  Sparkles,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1377,12 +1376,11 @@ export default function Home() {
           <div className="panel-scroll">
             <section className="search-section" aria-labelledby="route-search-title">
               <div className="section-kicker">
-                <Sparkles size={14} aria-hidden="true" />
                 대여부터 반납까지 한 번에
               </div>
               <div className="title-row">
                 <div>
-                  <h1 id="route-search-title">어디로 따라갈까요?</h1>
+                  <h1 id="route-search-title">오늘은 따릉이와 함께 어디로 가볼까요?</h1>
                   <p>출발지와 도착지만 고르면 나머지는 맡겨주세요.</p>
                 </div>
               </div>
