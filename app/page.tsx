@@ -716,6 +716,12 @@ function RouteMapChrome({
           지도를 불러오고 있어요
         </div>
       ) : null}
+      {ready && geometryStatus === "loading" ? (
+        <div className="route-loading" role="status" aria-live="polite">
+          <span className="loading-wheel" aria-hidden="true" />
+          <span className="screen-reader-only">경로를 불러오고 있어요</span>
+        </div>
+      ) : null}
       {showOpenStreetMapAttribution && hasOpenStreetMapRoute ? (
         <a
           className="map-route-attribution"
@@ -796,12 +802,27 @@ function LeafletRouteMap({
 
   useEffect(() => {
     if (!ready || !mapRef.current) return;
+    routeLayerRef.current?.remove();
+    routeLayerRef.current = null;
     let active = true;
 
     void import("leaflet").then((leafletModule) => {
       if (!active || !mapRef.current) return;
       const L = leafletModule.default;
-      if (routeLayerRef.current) routeLayerRef.current.remove();
+      if (geometryStatus === "loading") {
+        const bounds = L.latLngBounds([
+          plan.origin.coordinates,
+          plan.startStation.coordinates,
+          plan.endStation.coordinates,
+          plan.destination.coordinates,
+        ]);
+        mapRef.current.fitBounds(bounds, {
+          paddingTopLeft: [80, 110],
+          paddingBottomRight: [90, 90],
+          maxZoom: 15,
+        });
+        return;
+      }
       const group = L.layerGroup().addTo(mapRef.current);
       routeLayerRef.current = group;
 
@@ -919,7 +940,7 @@ function LeafletRouteMap({
     return () => {
       active = false;
     };
-  }, [geometry, plan, ready]);
+  }, [geometry, geometryStatus, plan, ready]);
 
   return (
     <div className="map-wrap">
@@ -1007,6 +1028,24 @@ function KakaoRouteMap({
     clearMapObjects();
     const toLatLng = ([latitude, longitude]: Coordinates) =>
       new sdk.maps.LatLng(latitude, longitude);
+    if (geometryStatus === "loading") {
+      const bounds = new sdk.maps.LatLngBounds();
+      [
+        plan.origin.coordinates,
+        plan.startStation.coordinates,
+        plan.endStation.coordinates,
+        plan.destination.coordinates,
+      ].forEach((coordinates) => bounds.extend(toLatLng(coordinates)));
+      const animationFrame = window.requestAnimationFrame(() => {
+        map.relayout();
+        map.setBounds(bounds, 110, 90, 90, 80);
+      });
+
+      return () => {
+        window.cancelAnimationFrame(animationFrame);
+        clearMapObjects();
+      };
+    }
     const addPolyline = (
       coordinates: Coordinates[],
       color: string,
@@ -1130,7 +1169,7 @@ function KakaoRouteMap({
       window.cancelAnimationFrame(animationFrame);
       clearMapObjects();
     };
-  }, [clearMapObjects, geometry, plan, ready]);
+  }, [clearMapObjects, geometry, geometryStatus, plan, ready]);
 
   return (
     <div className="map-wrap">

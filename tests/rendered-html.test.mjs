@@ -70,6 +70,23 @@ test("draws road geometry instead of manufactured map curves", async () => {
   assert.match(routeSource, /routeRatio > 4/);
 });
 
+test("shows a centered spinner instead of temporary dotted route geometry", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const routeLoadingRule =
+    styles.match(/\.route-loading\s*\{([^}]+)\}/)?.[1] ?? "";
+  const loadingGuards = pageSource.match(/geometryStatus === "loading"/g) ?? [];
+
+  assert.match(pageSource, /className="route-loading"/);
+  assert.match(pageSource, /경로를 불러오고 있어요/);
+  assert.equal(loadingGuards.length, 3);
+  assert.match(routeLoadingRule, /top:\s*50%/);
+  assert.match(routeLoadingRule, /left:\s*50%/);
+  assert.match(routeLoadingRule, /pointer-events:\s*none/);
+});
+
 test("keeps the place-swap control in flow between the two input boxes", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
