@@ -698,22 +698,14 @@ function PlaceField({
 function RouteMapChrome({
   plan,
   ready,
-  providerLabel,
   geometryStatus,
   showOpenStreetMapAttribution = false,
 }: {
   plan: RoutePlan;
   ready: boolean;
-  providerLabel: string;
   geometryStatus: RouteGeometryStatus;
   showOpenStreetMapAttribution?: boolean;
 }) {
-  const routeModeLabel = {
-    loading: "실제 도로 경로 계산 중",
-    ready: "실제 도보 · 자전거 경로",
-    partial: "도로 경로 · 짧은 구간 보정",
-    fallback: "경로 연결 지연 · 예상선",
-  }[geometryStatus];
   const hasOpenStreetMapRoute =
     geometryStatus === "ready" || geometryStatus === "partial";
 
@@ -725,13 +717,6 @@ function RouteMapChrome({
           지도를 불러오고 있어요
         </div>
       ) : null}
-      <div className="map-tools" aria-label="지도 정보">
-        <span className="live-chip">
-          <span className="live-dot" />
-          {providerLabel}
-        </span>
-        <span className={`map-mode is-${geometryStatus}`}>{routeModeLabel}</span>
-      </div>
       {showOpenStreetMapAttribution && hasOpenStreetMapRoute ? (
         <a
           className="map-route-attribution"
@@ -943,7 +928,6 @@ function LeafletRouteMap({
       <RouteMapChrome
         plan={plan}
         ready={ready}
-        providerLabel="대체 지도 · 운영 대여소"
         geometryStatus={geometryStatus}
       />
     </div>
@@ -1159,7 +1143,6 @@ function KakaoRouteMap({
       <RouteMapChrome
         plan={plan}
         ready={ready}
-        providerLabel="카카오맵 실제 지도"
         geometryStatus={geometryStatus}
         showOpenStreetMapAttribution
       />
@@ -1212,7 +1195,6 @@ function RouteMap({ plan }: { plan: RoutePlan }) {
       <RouteMapChrome
         plan={plan}
         ready={false}
-        providerLabel="카카오맵 연결 중"
         geometryStatus={geometryStatus}
       />
     </div>

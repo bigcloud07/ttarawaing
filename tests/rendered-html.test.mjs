@@ -58,6 +58,10 @@ test("draws road geometry instead of manufactured map curves", async () => {
   assert.match(pageSource, /OpenStreetMap contributors/);
   assert.match(pageSource, /attributionControl: true/);
   assert.doesNotMatch(pageSource, /openstreetmap\.org\/fixthemap|map-route-source/);
+  assert.doesNotMatch(
+    pageSource,
+    /map-tools|providerLabel|카카오맵 실제 지도|도로 경로 · 짧은 구간 보정/,
+  );
   assert.match(routeSource, /routing\.openstreetmap\.de/);
   assert.match(routeSource, /routed-foot/);
   assert.match(routeSource, /routed-bike/);

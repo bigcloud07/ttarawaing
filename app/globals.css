@@ -1250,61 +1250,6 @@ input:focus-visible {
   }
 }
 
-.map-tools {
-  position: absolute;
-  z-index: 400;
-  top: 20px;
-  left: 20px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.live-chip,
-.map-mode {
-  display: inline-flex;
-  height: 34px;
-  align-items: center;
-  border: 1px solid rgba(213, 224, 217, 0.95);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 5px 18px rgba(36, 57, 48, 0.1);
-  backdrop-filter: blur(12px);
-  font-size: 10px;
-  font-weight: 650;
-}
-
-.live-chip {
-  gap: 7px;
-  padding: 0 11px;
-  color: #4f6058;
-}
-
-.live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #ffb444;
-  box-shadow: 0 0 0 4px rgba(255, 180, 68, 0.16);
-}
-
-.map-mode {
-  padding: 0 12px;
-  color: var(--green-dark);
-}
-
-.map-mode.is-loading {
-  color: #7a6a42;
-}
-
-.map-mode.is-partial {
-  color: #8b6734;
-}
-
-.map-mode.is-fallback {
-  color: #a1523e;
-}
-
 .map-route-attribution {
   position: absolute;
   z-index: 400;
@@ -1534,15 +1479,6 @@ input:focus-visible {
     order: 0;
     height: 240px;
     min-height: 240px;
-  }
-
-  .map-tools {
-    top: 14px;
-    left: 14px;
-  }
-
-  .map-mode {
-    display: none;
   }
 
   .map-station-card {
