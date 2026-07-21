@@ -1494,7 +1494,7 @@ export default function Home() {
           <div className="panel-scroll">
             <section className="search-section" aria-labelledby="route-search-title">
               <div className="section-kicker">
-                대여부터 반납까지 한 번에
+                대여부터 반납까지 한 번에 알려드려요
               </div>
               <div className="title-row">
                 <div>

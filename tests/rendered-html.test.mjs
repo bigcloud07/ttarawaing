@@ -30,6 +30,8 @@ test("server-renders the ttarawaing route planner", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>따라와잉/);
+  assert.match(html, /대여부터 반납까지 한 번에 알려드려요/);
+  assert.doesNotMatch(html, /대여부터 반납까지 한 번에<\/div>/);
   assert.match(html, /오늘은 어디로 가볼까요/);
   assert.doesNotMatch(html, /오늘은 따릉이와 함께 어디로 가볼까요/);
   assert.doesNotMatch(html, /어디로 따라갈까요/);
