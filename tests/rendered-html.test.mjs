@@ -137,11 +137,17 @@ test("locates the user from a lower-right map control on both map providers", as
   ]);
   const guideControlsRule =
     styles.match(/\.map-guide-controls\s*\{([^}]+)\}/)?.[1] ?? "";
+  const locationControlRule =
+    styles.match(/\.map-location-control\s*\{([^}]+)\}/)?.[1] ?? "";
   const locationControlIndex = pageSource.indexOf("map-location-control");
   const legendIndex = pageSource.indexOf('className="map-legend"');
 
   assert.ok(locationControlIndex >= 0);
   assert.ok(legendIndex > locationControlIndex);
+  assert.doesNotMatch(
+    pageSource,
+    /<span>\{locationStatus === "loading" \? "확인 중" : "현재 위치"\}<\/span>/,
+  );
   assert.match(pageSource, /navigator\.geolocation\.getCurrentPosition/);
   assert.match(pageSource, /map\.flyTo\(userLocation/);
   assert.match(pageSource, /map\.panTo\(position\)/);
@@ -151,6 +157,8 @@ test("locates the user from a lower-right map control on both map providers", as
   assert.match(guideControlsRule, /right:\s*20px/);
   assert.match(guideControlsRule, /bottom:\s*20px/);
   assert.match(guideControlsRule, /align-items:\s*flex-end/);
+  assert.match(locationControlRule, /width:\s*40px/);
+  assert.match(locationControlRule, /justify-content:\s*center/);
 });
 
 test("fills the desktop map to the top beside the left-only header", async () => {

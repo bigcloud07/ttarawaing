@@ -802,7 +802,6 @@ function RouteMapChrome({
             strokeWidth={2.3}
             aria-hidden="true"
           />
-          <span>{locationStatus === "loading" ? "확인 중" : "현재 위치"}</span>
         </button>
         {locationStatus === "error" ? (
           <span className="map-location-error" role="alert">
