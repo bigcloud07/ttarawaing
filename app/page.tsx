@@ -2354,14 +2354,23 @@ export default function Home() {
                   />
                 </div>
                 <div className="mode-labels">
-                  <span className="walk-to-label">
-                    <Footprints size={14} aria-hidden="true" /> 출발 대여소까지 도보 {plan.walkToMinutes}분
+                  <span
+                    className="walk-to-label"
+                    aria-label={`출발 대여소까지 도보 ${plan.walkToMinutes}분`}
+                  >
+                    <Footprints size={14} aria-hidden="true" /> {plan.walkToMinutes}분
                   </span>
-                  <span className="bike-label">
-                    <Bike size={15} aria-hidden="true" /> 따릉이 {plan.bikeMinutes}분
+                  <span
+                    className="bike-label"
+                    aria-label={`따릉이 ${plan.bikeMinutes}분`}
+                  >
+                    <Bike size={15} aria-hidden="true" /> {plan.bikeMinutes}분
                   </span>
-                  <span className="walk-from-label">
-                    <Footprints size={14} aria-hidden="true" /> 도착지까지 도보 {plan.walkFromMinutes}분
+                  <span
+                    className="walk-from-label"
+                    aria-label={`도착지까지 도보 ${plan.walkFromMinutes}분`}
+                  >
+                    <Footprints size={14} aria-hidden="true" /> {plan.walkFromMinutes}분
                   </span>
                 </div>
               </div>

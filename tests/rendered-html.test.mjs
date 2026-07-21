@@ -340,21 +340,17 @@ test("focuses the map when each route timeline place is selected", async () => {
   );
 });
 
-test("summarizes route time in travel order without a transfer bucket", async () => {
+test("summarizes route time as icon and duration in travel order", async () => {
   const pageSource = await readFile(
     new URL("../app/page.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(
-    pageSource,
-    /출발 대여소까지 도보 \{plan\.walkToMinutes\}분/,
-  );
-  assert.match(pageSource, /따릉이 \{plan\.bikeMinutes\}분/);
-  assert.match(
-    pageSource,
-    /도착지까지 도보 \{plan\.walkFromMinutes\}분/,
-  );
+  assert.match(pageSource, /<Footprints[^>]*\/> \{plan\.walkToMinutes\}분/);
+  assert.match(pageSource, /<Bike[^>]*\/> \{plan\.bikeMinutes\}분/);
+  assert.match(pageSource, /<Footprints[^>]*\/> \{plan\.walkFromMinutes\}분/);
+  assert.match(pageSource, /aria-label=\{`출발 대여소까지 도보 \$\{plan\.walkToMinutes\}분`\}/);
+  assert.match(pageSource, /aria-label=\{`도착지까지 도보 \$\{plan\.walkFromMinutes\}분`\}/);
   assert.match(
     pageSource,
     /const totalMinutes = walkToMinutes \+ bikeMinutes \+ walkFromMinutes;/,
