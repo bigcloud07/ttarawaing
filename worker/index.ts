@@ -22,6 +22,7 @@ interface ExecutionContext {
 
 const BIKE_SEOUL_REALTIME_URL =
   "https://www.bikeseoul.com/app/station/getStationRealtimeStatus.do";
+const BIKE_SEOUL_REALTIME_TIMEOUT_MS = 10_000;
 
 function getBikeCount(value: unknown) {
   const parsed = Number(value);
@@ -96,19 +97,39 @@ const worker = {
       }
 
       try {
-        const upstream = await fetch(BIKE_SEOUL_REALTIME_URL, {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            Referer: "https://www.bikeseoul.com/app/station/moveStationRealtimeStatus.do",
-          },
-          body: new URLSearchParams({ stationGrpSeq: "ALL" }),
-        });
+        const controller = new AbortController();
+        const abortFromClient = () => controller.abort(request.signal.reason);
+        request.signal.addEventListener("abort", abortFromClient, { once: true });
+        const timeoutId = setTimeout(
+          () =>
+            controller.abort(
+              new DOMException("Bike Seoul request timed out.", "TimeoutError"),
+            ),
+          BIKE_SEOUL_REALTIME_TIMEOUT_MS,
+        );
+        let upstream: Response;
+        let payload: Record<string, unknown>;
+        try {
+          upstream = await fetch(BIKE_SEOUL_REALTIME_URL, {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+              Referer: "https://www.bikeseoul.com/app/station/moveStationRealtimeStatus.do",
+            },
+            body: new URLSearchParams({ stationGrpSeq: "ALL" }),
+            signal: controller.signal,
+          });
 
-        if (!upstream.ok) throw new Error(`Bike Seoul returned ${upstream.status}.`);
+          if (!upstream.ok) {
+            throw new Error(`Bike Seoul returned ${upstream.status}.`);
+          }
+          payload = (await upstream.json()) as Record<string, unknown>;
+        } finally {
+          clearTimeout(timeoutId);
+          request.signal.removeEventListener("abort", abortFromClient);
+        }
 
-        const payload = (await upstream.json()) as Record<string, unknown>;
         const rawStations = Array.isArray(payload.realtimeList)
           ? payload.realtimeList
           : [];

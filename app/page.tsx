@@ -46,12 +46,21 @@ import {
   PASS_OPTIONS,
   PASS_TYPE_STORAGE_KEY,
   TRANSFER_STOP_OVERHEAD_MINUTES,
-  areBikeLegsWithinPassLimit,
   getPassSafeRideMinutes,
-  initialMinimumStopCount,
   isPassType,
-  selectRouteCorridorStations,
 } from "./pass-planning";
+import {
+  calculateRouteGeometryMetrics,
+  recommendPassTransferRoute,
+} from "./pass-route-recommendation";
+import { fetchRealtimeBikeAvailability } from "./realtime-bikes";
+import { readStoredValue, writeStoredValue } from "./safe-storage";
+import {
+  createLatestRequestGate,
+  requestCurrentPositionOnce,
+} from "./current-location-request";
+import { requestDeviceOrientationPermission } from "./device-orientation-permission";
+import { splitKakaoRoutePoints } from "./kakao-route-groups";
 import stationCatalog from "./data/seoul-bike-stations.json";
 import type {
   KakaoCustomOverlay,
@@ -67,6 +76,7 @@ import type {
   RouteGeometryInput,
 } from "./route-geometry";
 import type { PassType } from "./pass-planning";
+import type { PassRouteStatus } from "./pass-route-recommendation";
 
 type Place = {
   id: string;
@@ -107,12 +117,6 @@ type RouteHistoryItem = {
   destination: Place;
 };
 
-type PassRouteStatus =
-  | "loading"
-  | "not-needed"
-  | "recommended"
-  | "unavailable";
-
 type RouteRecommendation = {
   key: string;
   plan: RoutePlan;
@@ -132,8 +136,7 @@ type MapFocusRequest = {
 
 const ROUTE_FOCUS_LEAFLET_ZOOM = 18;
 const ROUTE_FOCUS_KAKAO_LEVEL = 2;
-const MAX_TRANSFER_COMBINATIONS_PER_STOP_COUNT = 4;
-const KAKAO_MAX_WAYPOINTS = 5;
+const ROUTE_RECOMMENDATION_TIMEOUT_MS = 60_000;
 
 const PLACES: Place[] = [
   {
@@ -238,92 +241,6 @@ const STATIONS: Station[] = stationCatalog.stations.map((station) => ({
 }));
 const EMPTY_STATIONS: Station[] = [];
 const EMPTY_BIKE_LEGS: BikeRouteLeg[] = [];
-
-const BIKE_SEOUL_REALTIME_URL =
-  "https://www.bikeseoul.com/app/station/getStationRealtimeStatus.do";
-
-type RealtimeBikeAvailability = {
-  id: string;
-  availableBikes: number;
-};
-
-function toBikeCount(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
-}
-
-function normalizeRealtimeBikeAvailability(payload: unknown): RealtimeBikeAvailability[] {
-  if (!payload || typeof payload !== "object") return [];
-  const body = payload as Record<string, unknown>;
-
-  if (Array.isArray(body.stations)) {
-    return body.stations.flatMap((value) => {
-      if (!value || typeof value !== "object") return [];
-      const station = value as Record<string, unknown>;
-      if (
-        typeof station.id !== "string" ||
-        typeof station.availableBikes !== "number" ||
-        !Number.isFinite(station.availableBikes) ||
-        station.availableBikes < 0
-      ) {
-        return [];
-      }
-      return [{ id: station.id, availableBikes: Math.floor(station.availableBikes) }];
-    });
-  }
-
-  if (!Array.isArray(body.realtimeList)) return [];
-  return body.realtimeList.flatMap((value) => {
-    if (!value || typeof value !== "object") return [];
-    const station = value as Record<string, unknown>;
-    const stationName = typeof station.stationName === "string" ? station.stationName : "";
-    const id = stationName.match(/^\s*(\d+)\./)?.[1];
-    if (!id) return [];
-
-    return [
-      {
-        id,
-        availableBikes:
-          toBikeCount(station.parkingBikeTotCnt) +
-          toBikeCount(station.parkingQRBikeCnt) +
-          toBikeCount(station.parkingELECBikeCnt),
-      },
-    ];
-  });
-}
-
-async function fetchRealtimeBikeAvailability(signal: AbortSignal) {
-  const requests = [
-    () =>
-      fetch(BIKE_SEOUL_REALTIME_URL, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        },
-        body: new URLSearchParams({ stationGrpSeq: "ALL" }),
-        signal,
-      }),
-    () =>
-      fetch("/api/bike-stations/realtime", {
-        headers: { Accept: "application/json" },
-        signal,
-      }),
-  ];
-
-  for (const makeRequest of requests) {
-    try {
-      const response = await makeRequest();
-      if (!response.ok) continue;
-      const availability = normalizeRealtimeBikeAvailability(await response.json());
-      if (availability.length >= 2_700) return availability;
-    } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-    }
-  }
-
-  throw new Error("Realtime bike status request failed.");
-}
 
 const ROUTE_HISTORY_STORAGE_KEY = "ttarawaing-route-history-v1";
 const ROUTE_HISTORY_LIMIT = 3;
@@ -552,31 +469,9 @@ function applyRouteGeometryToPlan(
   geometry: RouteGeometry,
   transferStopCount: number,
 ): RoutePlan {
-  const walkToMeters = Math.round(geometry.walkTo.distanceMeters);
-  const bikeMeters = Math.round(geometry.bike.distanceMeters);
-  const walkFromMeters = Math.round(geometry.walkFrom.distanceMeters);
-  const walkToMinutes = Math.max(1, Math.ceil(geometry.walkTo.durationSeconds / 60));
-  const bikeMinutes = Math.max(1, Math.ceil(geometry.bike.durationSeconds / 60));
-  const walkFromMinutes = Math.max(
-    1,
-    Math.ceil(geometry.walkFrom.durationSeconds / 60),
-  );
-  const transferMinutes = transferStopCount * TRANSFER_STOP_OVERHEAD_MINUTES;
-
   return {
     ...plan,
-    walkToMeters,
-    bikeMeters,
-    walkFromMeters,
-    walkToMinutes,
-    bikeMinutes,
-    walkFromMinutes,
-    totalMinutes:
-      walkToMinutes + bikeMinutes + walkFromMinutes + transferMinutes,
-    totalMeters: walkToMeters + bikeMeters + walkFromMeters,
-    calories: Math.round(
-      bikeMinutes * 6.2 + (walkToMinutes + walkFromMinutes) * 3.1,
-    ),
+    ...calculateRouteGeometryMetrics(geometry, transferStopCount),
   };
 }
 
@@ -593,22 +488,6 @@ function getKakaoRoutePoints(plan: RoutePlan, transferStops: Station[]) {
     plan.endStation,
     plan.destination,
   ];
-}
-
-function splitKakaoRoutePoints<T>(points: T[]) {
-  const maximumPointsPerLink = KAKAO_MAX_WAYPOINTS + 2;
-  if (points.length < 2) return [];
-  if (points.length <= maximumPointsPerLink) return [points];
-
-  const groups: T[][] = [];
-  let startIndex = 0;
-  while (startIndex < points.length - 1) {
-    const group = points.slice(startIndex, startIndex + maximumPointsPerLink);
-    if (group.length < 2) break;
-    groups.push(group);
-    startIndex += group.length - 1;
-  }
-  return groups;
 }
 
 function buildKakaoBicycleRouteUrls(plan: RoutePlan, transferStops: Station[]) {
@@ -757,6 +636,15 @@ function useRouteRecommendation(
   passType: PassType,
   stations: Station[],
 ): RouteRecommendation | null {
+  const stationAvailabilityKey = useMemo(
+    () =>
+      stations
+        .map((station) =>
+          station.bikes === null ? "u" : station.bikes === 0 ? "0" : "1",
+        )
+        .join(""),
+    [stations],
+  );
   const baseInput = useMemo<RouteGeometryInput | null>(
     () =>
       basePlan
@@ -772,9 +660,9 @@ function useRouteRecommendation(
   const key = useMemo(
     () =>
       baseInput
-        ? `${createRouteGeometryKey(baseInput)}|pass:${passType}`
+        ? `${createRouteGeometryKey(baseInput)}|pass:${passType}|availability:${stationAvailabilityKey}`
         : "no-route",
-    [baseInput, passType],
+    [baseInput, passType, stationAvailabilityKey],
   );
   const fallback = useMemo<RouteRecommendation | null>(() => {
     if (!basePlan || !baseInput) return null;
@@ -797,6 +685,16 @@ function useRouteRecommendation(
     }
 
     let active = true;
+    let latestGeometry = fallback.geometry;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      controller.abort(
+        new DOMException(
+          "Route recommendation timed out.",
+          "TimeoutError",
+        ),
+      );
+    }, ROUTE_RECOMMENDATION_TIMEOUT_MS);
     const publish = (
       geometry: RouteGeometry,
       transferStops: Station[],
@@ -814,116 +712,55 @@ function useRouteRecommendation(
       });
     };
 
-    void (async () => {
-      try {
-        const baseGeometry = await loadRouteGeometry(baseInput);
-        if (!active) return;
-        const safeRideMinutes = getPassSafeRideMinutes(passType);
-
-        if (safeRideMinutes === null) {
-          publish(baseGeometry, [], "not-needed");
-          return;
-        }
-
-        if (baseGeometry.bike.source !== "osrm") {
-          publish(baseGeometry, [], "unavailable");
-          return;
-        }
-
-        const baseBikeLegMinutes = baseGeometry.bikeLegs.map(
-          (leg) => leg.durationSeconds / 60,
-        );
-        if (areBikeLegsWithinPassLimit(baseBikeLegMinutes, passType)) {
-          publish(baseGeometry, [], "not-needed");
-          return;
-        }
-
-        const initialStopCount = initialMinimumStopCount(
-          baseGeometry.bike.durationSeconds / 60,
-          passType,
-        );
-        const maximumStopCount = Math.min(8, Math.max(4, initialStopCount + 4));
-        const endpointStationIds = new Set([
-          basePlan.startStation.id,
-          basePlan.endStation.id,
-        ]);
-
-        for (
-          let stopCount = Math.max(1, initialStopCount);
-          stopCount <= maximumStopCount;
-          stopCount += 1
-        ) {
-          const exclusionQueue: Set<string>[] = [new Set(endpointStationIds)];
-          const seenExclusionSets = new Set([
-            [...endpointStationIds].sort().join(","),
-          ]);
-          const triedStationSequences = new Set<string>();
-          let combinationCount = 0;
-
-          while (
-            exclusionQueue.length &&
-            combinationCount < MAX_TRANSFER_COMBINATIONS_PER_STOP_COUNT
-          ) {
-            if (!active) return;
-            const excludedStationIds = exclusionQueue.shift() ?? endpointStationIds;
-            const transferStops = selectRouteCorridorStations({
-              routePath: baseGeometry.bike.path,
-              stations,
-              stopCount,
-              excludedStationIds,
-              stationPenaltyMeters: (station) =>
-                station.bikes === null ? 90 : station.bikes === 0 ? 25 : 0,
-            });
-            if (transferStops.length !== stopCount) continue;
-
-            const stationSequence = transferStops
-              .map((station) => station.id)
-              .join(">");
-            if (triedStationSequences.has(stationSequence)) continue;
-            triedStationSequences.add(stationSequence);
-            combinationCount += 1;
-
-            for (const station of transferStops) {
-              const nextExclusions = new Set(excludedStationIds);
-              nextExclusions.add(station.id);
-              const exclusionKey = [...nextExclusions].sort().join(",");
-              if (!seenExclusionSets.has(exclusionKey)) {
-                seenExclusionSets.add(exclusionKey);
-                exclusionQueue.push(nextExclusions);
-              }
-            }
-
-            const geometry = await loadRouteGeometry({
-              ...baseInput,
-              transferStations: transferStops.map((station) => station.coordinates),
-            });
-            if (!active) return;
-            const bikeLegMinutes = geometry.bikeLegs.map(
-              (leg) => leg.durationSeconds / 60,
-            );
-            const allRoadLegs =
-              geometry.bike.source === "osrm" &&
-              geometry.bikeLegs.every((leg) => leg.source === "osrm");
-            if (allRoadLegs && areBikeLegsWithinPassLimit(bikeLegMinutes, passType)) {
-              publish(geometry, transferStops, "recommended");
-              return;
-            }
-          }
-        }
-
-        publish(baseGeometry, [], "unavailable");
-      } catch {
+    void recommendPassTransferRoute({
+      baseInput,
+      passType,
+      stations,
+      startStationId: basePlan.startStation.id,
+      endStationId: basePlan.endStation.id,
+      signal: controller.signal,
+      loadGeometry: (input, signal) =>
+        loadRouteGeometry(input, { signal }),
+      onBaseGeometry: (geometry) => {
+        latestGeometry = geometry;
         if (!active) return;
         setState({
-          ...fallback,
-          passStatus: passType === "none" ? "not-needed" : "unavailable",
-          geometryStatus: "fallback",
+          key,
+          plan: applyRouteGeometryToPlan(basePlan, geometry, 0),
+          geometry,
+          geometryStatus: getRouteGeometryStatus(geometry),
+          transferStops: [],
+          bikeLegs: geometry.bikeLegs,
+          passStatus: "loading",
         });
-      }
-    })();
+      },
+    })
+      .then((recommendation) => {
+        if (!active) return;
+        publish(
+          recommendation.geometry,
+          recommendation.transferStops,
+          recommendation.status,
+        );
+      })
+      .catch(() => {
+        if (!active) return;
+        setState({
+          key,
+          plan: applyRouteGeometryToPlan(basePlan, latestGeometry, 0),
+          geometry: latestGeometry,
+          transferStops: [],
+          bikeLegs: latestGeometry.bikeLegs,
+          passStatus: passType === "none" ? "not-needed" : "unavailable",
+          geometryStatus: getRouteGeometryStatus(latestGeometry),
+        });
+      })
+      .finally(() => window.clearTimeout(timeoutId));
 
     return () => {
       active = false;
+      window.clearTimeout(timeoutId);
+      controller.abort();
     };
   }, [baseInput, basePlan, fallback, key, passType, stations]);
 
@@ -1049,8 +886,8 @@ function PlaceField({
       {open ? (
         <div className="suggestions" id={`${id}-suggestions`} role="listbox">
           {loading || failed ? (
-            <div className="suggestion-eyebrow">
-              {loading ? "카카오맵에서 검색 중…" : "데모 장소로 검색 중"}
+            <div className="suggestion-eyebrow" role="status" aria-live="polite">
+              {loading ? "카카오맵에서 검색 중…" : "기본 장소를 보여드려요"}
             </div>
           ) : null}
           {matches.length ? (
@@ -1059,7 +896,7 @@ function PlaceField({
                 id={`${id}-option-${index}`}
                 type="button"
                 role="option"
-                aria-selected={selected?.id === place.id}
+                aria-selected={index === boundedActiveIndex}
                 className={`suggestion-item ${index === boundedActiveIndex ? "is-active" : ""}`}
                 key={place.id}
                 onMouseDown={(event) => event.preventDefault()}
@@ -1079,7 +916,7 @@ function PlaceField({
               </button>
             ))
           ) : (
-            <div className="empty-suggestion">
+            <div className="empty-suggestion" role="status" aria-live="polite">
               {loading ? (
                 <span className="suggestion-loader" aria-hidden="true" />
               ) : (
@@ -1092,7 +929,7 @@ function PlaceField({
               </p>
               <small>
                 {failed
-                  ? "카카오맵 연결이 지연되어 데모 장소만 확인했어요."
+                  ? "카카오맵 연결이 지연되어 기본 장소만 확인했어요."
                   : "건물명, 역명 또는 도로명 주소를 입력해 보세요."}
               </small>
             </div>
@@ -1470,6 +1307,44 @@ function LeafletRouteMap({
   }, [focusRequest, ready]);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    let animationFrame = 0;
+    let active = true;
+    const resizeMap = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        map.invalidateSize();
+        if (focusRequestRef.current || hasLocatedRef.current) return;
+        void import("leaflet").then((leafletModule) => {
+          if (!active || !mapRef.current) return;
+          const bounds = leafletModule.default.latLngBounds([
+            ...geometry.walkTo.path,
+            ...geometry.bike.path,
+            ...geometry.walkFrom.path,
+            plan.origin.coordinates,
+            plan.startStation.coordinates,
+            ...transferStops.map((station) => station.coordinates),
+            plan.endStation.coordinates,
+            plan.destination.coordinates,
+          ]);
+          map.fitBounds(bounds, {
+            paddingTopLeft: [80, 110],
+            paddingBottomRight: [90, 90],
+            maxZoom: 15,
+          });
+        });
+      });
+    };
+    window.addEventListener("resize", resizeMap);
+    return () => {
+      active = false;
+      window.removeEventListener("resize", resizeMap);
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, [geometry, plan, ready, transferStops]);
+
+  useEffect(() => {
     if (!ready || !mapRef.current) return;
     if (!userLocation) {
       locationLayerRef.current?.remove();
@@ -1623,18 +1498,36 @@ function KakaoRouteMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!ready || !map) return;
+    const sdk = sdkRef.current;
+    if (!ready || !map || !sdk) return;
     let animationFrame = 0;
     const relayoutMap = () => {
       window.cancelAnimationFrame(animationFrame);
-      animationFrame = window.requestAnimationFrame(() => map.relayout());
+      animationFrame = window.requestAnimationFrame(() => {
+        map.relayout();
+        if (focusRequestRef.current || hasLocatedRef.current) return;
+        const bounds = new sdk.maps.LatLngBounds();
+        [
+          ...geometry.walkTo.path,
+          ...geometry.bike.path,
+          ...geometry.walkFrom.path,
+          plan.origin.coordinates,
+          plan.startStation.coordinates,
+          ...transferStops.map((station) => station.coordinates),
+          plan.endStation.coordinates,
+          plan.destination.coordinates,
+        ].forEach(([latitude, longitude]) =>
+          bounds.extend(new sdk.maps.LatLng(latitude, longitude)),
+        );
+        map.setBounds(bounds, 110, 90, 90, 80);
+      });
     };
     window.addEventListener("resize", relayoutMap);
     return () => {
       window.removeEventListener("resize", relayoutMap);
       window.cancelAnimationFrame(animationFrame);
     };
-  }, [ready]);
+  }, [geometry, plan, ready, transferStops]);
 
   useEffect(() => {
     const sdk = sdkRef.current;
@@ -2001,6 +1894,9 @@ export default function Home() {
   const [routeDetailsOpen, setRouteDetailsOpen] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [notice, setNotice] = useState("");
+  const noticeTimerRef = useRef<number | null>(null);
+  const completedRouteNoticeKeyRef = useRef<string | null>(null);
+  const originLocationRequestGateRef = useRef(createLatestRequestGate());
   const [mapFocusRequest, setMapFocusRequest] = useState<MapFocusRequest | null>(
     null,
   );
@@ -2027,17 +1923,42 @@ export default function Home() {
     "loading" | "ready" | "unavailable"
   >("loading");
 
+  const showNotice = useCallback((message: string, durationMs?: number) => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+    setNotice(message);
+    if (durationMs !== undefined) {
+      noticeTimerRef.current = window.setTimeout(() => {
+        noticeTimerRef.current = null;
+        setNotice("");
+      }, durationMs);
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+      originLocationRequestGateRef.current.invalidate();
+    },
+    [],
+  );
+
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      try {
-        setRouteHistory(
-          parseRouteHistory(window.localStorage.getItem(ROUTE_HISTORY_STORAGE_KEY)),
-        );
-        const storedPassType = window.localStorage.getItem(PASS_TYPE_STORAGE_KEY);
-        if (isPassType(storedPassType)) setPassType(storedPassType);
-      } catch {
-        setRouteHistory([]);
-      }
+      setRouteHistory(
+        parseRouteHistory(
+          readStoredValue(window.localStorage, ROUTE_HISTORY_STORAGE_KEY),
+        ),
+      );
+      const storedPassType = readStoredValue(
+        window.localStorage,
+        PASS_TYPE_STORAGE_KEY,
+      );
+      if (isPassType(storedPassType)) setPassType(storedPassType);
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
@@ -2107,13 +2028,27 @@ export default function Home() {
     [passRouteStatus, plan, transferStops],
   );
 
+  useEffect(() => {
+    if (!committedRoute) {
+      completedRouteNoticeKeyRef.current = null;
+      return;
+    }
+    if (
+      !routeRecommendation ||
+      routeRecommendation.passStatus === "loading" ||
+      routeRecommendation.passStatus === "unavailable" ||
+      completedRouteNoticeKeyRef.current === routeRecommendation.key
+    ) {
+      return;
+    }
+
+    completedRouteNoticeKeyRef.current = routeRecommendation.key;
+    showNotice("가장 편한 따릉이 경로를 찾았어요.", 2_800);
+  }, [committedRoute, routeRecommendation, showNotice]);
+
   const choosePassType = useCallback((nextPassType: PassType) => {
     setPassType(nextPassType);
-    try {
-      window.localStorage.setItem(PASS_TYPE_STORAGE_KEY, nextPassType);
-    } catch {
-      // The current session still uses the selected pass when storage is unavailable.
-    }
+    writeStoredValue(window.localStorage, PASS_TYPE_STORAGE_KEY, nextPassType);
   }, []);
 
   const rememberRoute = useCallback((route: RouteHistoryItem) => {
@@ -2133,14 +2068,11 @@ export default function Home() {
         ),
       ].slice(0, ROUTE_HISTORY_LIMIT);
 
-      try {
-        window.localStorage.setItem(
-          ROUTE_HISTORY_STORAGE_KEY,
-          JSON.stringify(nextHistory),
-        );
-      } catch {
-        // The current session still keeps its history when storage is unavailable.
-      }
+      writeStoredValue(
+        window.localStorage,
+        ROUTE_HISTORY_STORAGE_KEY,
+        JSON.stringify(nextHistory),
+      );
       return nextHistory;
     });
   }, []);
@@ -2172,12 +2104,12 @@ export default function Home() {
       setSelectedEndStationId(undefined);
       setAlternativesOpen(false);
       setErrorMessage("");
-      setNotice("가장 편한 따릉이 경로를 찾았어요.");
-      window.setTimeout(() => setNotice(""), 2800);
+      originLocationRequestGateRef.current.invalidate();
     }, [destination, origin, rememberRoute],
   );
 
   const selectOrigin = (place: Place) => {
+    originLocationRequestGateRef.current.invalidate();
     setOrigin(place);
     setOriginQuery(place.name);
     setErrorMessage("");
@@ -2190,13 +2122,11 @@ export default function Home() {
   };
 
   const useCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setErrorMessage("이 브라우저에서는 현재 위치를 사용할 수 없어요.");
-      return;
-    }
-    setNotice("현재 위치를 확인하고 있어요…");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
+    showNotice("현재 위치를 확인하고 있어요…");
+    requestCurrentPositionOnce({
+      geolocation: navigator.geolocation ?? null,
+      gate: originLocationRequestGateRef.current,
+      onSuccess: (position) => {
         const currentPlace: Place = {
           id: "current-location",
           name: "내 현재 위치",
@@ -2205,18 +2135,26 @@ export default function Home() {
           coordinates: [position.coords.latitude, position.coords.longitude],
         };
         selectOrigin(currentPlace);
-        setNotice("현재 위치를 출발지로 설정했어요.");
-        window.setTimeout(() => setNotice(""), 2600);
+        showNotice("현재 위치를 출발지로 설정했어요.", 2_600);
       },
-      () => {
-        setNotice("");
-        setErrorMessage("위치 권한을 허용하면 현재 위치에서 출발할 수 있어요.");
+      onError: (error) => {
+        showNotice("");
+        setErrorMessage(
+          error.code === error.PERMISSION_DENIED
+            ? "위치 권한을 허용하면 현재 위치에서 출발할 수 있어요."
+            : "현재 위치를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        );
       },
-      { enableHighAccuracy: true, timeout: 8000 },
-    );
+      onUnsupported: () => {
+        showNotice("");
+        setErrorMessage("이 브라우저에서는 현재 위치를 사용할 수 없어요.");
+      },
+      options: { enableHighAccuracy: true, timeout: 8_000 },
+    });
   };
 
   const swapPlaces = () => {
+    originLocationRequestGateRef.current.invalidate();
     const nextOrigin = destination;
     const nextDestination = origin;
     const nextOriginQuery = destinationQuery;
@@ -2352,25 +2290,17 @@ export default function Home() {
         ? null
         : (DeviceOrientationEvent as OrientationEventConstructor);
 
-    if (!orientationConstructor) {
+    const permission = await requestDeviceOrientationPermission(
+      orientationConstructor,
+    );
+    if (mapLocationRequestIdRef.current !== requestId) return;
+    if (permission === "unsupported") {
       if (mapLocationRequestIdRef.current !== requestId) return;
       setMapLocationMode("heading");
       setMapHeadingStatus("fallback");
       return;
     }
-
-    try {
-      if (typeof orientationConstructor.requestPermission === "function") {
-        const permission = await orientationConstructor.requestPermission();
-        if (mapLocationRequestIdRef.current !== requestId) return;
-        if (permission !== "granted") {
-          setMapLocationMode("tracking");
-          setMapHeadingStatus("denied");
-          return;
-        }
-      }
-    } catch {
-      if (mapLocationRequestIdRef.current !== requestId) return;
+    if (permission === "denied") {
       setMapLocationMode("tracking");
       setMapHeadingStatus("denied");
       return;
@@ -2485,6 +2415,7 @@ export default function Home() {
   );
 
   const resetRoute = () => {
+    originLocationRequestGateRef.current.invalidate();
     stopMapLocationTracking(true);
     setOriginQuery("");
     setDestinationQuery("");
@@ -2496,7 +2427,7 @@ export default function Home() {
     setAlternativesOpen(false);
     setRouteDetailsOpen(true);
     setErrorMessage("");
-    setNotice("");
+    showNotice("");
     window.requestAnimationFrame(() => document.getElementById("origin")?.focus());
   };
 
@@ -2504,6 +2435,12 @@ export default function Home() {
     mapLocationMode === "heading"
       ? (mapDeviceHeading ?? mapTravelHeading)
       : null;
+  const startStationAvailabilityLabel =
+    plan && liveBikeStatus === "ready" && plan.startStation.bikes !== null
+      ? `대여 가능 따릉이 ${plan.startStation.bikes}대`
+      : liveBikeStatus === "loading"
+        ? "실시간 대여 가능 수량 확인 중"
+        : "수량 미확인";
 
   return (
     <main className="app-shell">
@@ -2548,6 +2485,7 @@ export default function Home() {
                     tone="origin"
                     placeholder="출발 장소를 검색해 주세요"
                     onQueryChange={(value) => {
+                      originLocationRequestGateRef.current.invalidate();
                       setOriginQuery(value);
                       if (origin?.name !== value) setOrigin(null);
                     }}
@@ -2689,6 +2627,24 @@ export default function Home() {
                 </div>
               </div>
 
+              {routeRecommendation?.geometryStatus === "partial" ? (
+                <div className="route-geometry-warning" role="alert">
+                  <AlertTriangle size={15} aria-hidden="true" />
+                  <span>
+                    일부 구간은 직선거리 기반 예상이에요. 출발 전에 지도 앱에서 실제
+                    이동 경로를 확인해 주세요.
+                  </span>
+                </div>
+              ) : routeRecommendation?.geometryStatus === "fallback" ? (
+                <div className="route-geometry-warning" role="alert">
+                  <AlertTriangle size={15} aria-hidden="true" />
+                  <span>
+                    도로 경로를 불러오지 못해 전 구간을 직선거리로 예상했어요. 실제
+                    경로 안내로 사용하지 마세요.
+                  </span>
+                </div>
+              ) : null}
+
               {passRouteStatus === "loading" ? (
                 <div className="pass-route-status" role="status" aria-live="polite">
                   <span className="loading-wheel" aria-hidden="true" />
@@ -2782,7 +2738,7 @@ export default function Home() {
                       <button
                         className="station-focus-button"
                         type="button"
-                        aria-label={`${plan.startStation.name} 출발 대여소를 지도에서 보기`}
+                        aria-label={`${plan.startStation.name} 출발 대여소를 지도에서 보기. ${startStationAvailabilityLabel}`}
                         onClick={() => focusMapPoint("startStation")}
                       >
                         <span className="station-title-line">
@@ -2802,6 +2758,12 @@ export default function Home() {
                                   ? "bikes-empty"
                                   : "bikes-live"
                             }`}
+                            aria-hidden="true"
+                            title={
+                              liveBikeStatus === "unavailable"
+                                ? "현재 대여 가능 수량을 불러오지 못했어요."
+                                : undefined
+                            }
                           >
                             {liveBikeStatus === "ready" && plan.startStation.bikes !== null ? (
                               <>
@@ -2810,12 +2772,19 @@ export default function Home() {
                             ) : liveBikeStatus === "loading" ? (
                               "현황 확인 중"
                             ) : (
-                              "현황 확인 필요"
+                              "수량 미확인"
                             )}
                           </span>
                         </span>
                         <span className="station-address">{plan.startStation.address}</span>
                       </button>
+                      <span
+                        className="screen-reader-only"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        {startStationAvailabilityLabel}
+                      </span>
                       {plan.startStationAdjustedForAvailability ? (
                         <p className="start-station-adjustment-note" role="status">
                           현재 가장 가까운 정류소의 따릉이가 없어서 다른 최적의 대여소를
@@ -2925,6 +2894,7 @@ export default function Home() {
                             <button
                               type="button"
                               className={station.id === plan.endStation.id ? "selected" : ""}
+                              aria-pressed={station.id === plan.endStation.id}
                               key={station.id}
                               onClick={() => {
                                 setMapFocusRequest(null);
@@ -3052,7 +3022,7 @@ export default function Home() {
                   <p className="kakao-route-note">
                     {kakaoRouteUrls.length > 1
                       ? `카카오맵 경유지 제한에 맞춰 ${kakaoRouteUrls.length}개 구간으로 나눴어요. 버튼을 순서대로 열어 주세요.`
-                      : "카카오맵에서는 모든 경유 지점을 하나의 자전거 경로로 열어요."}
+                      : "카카오맵 자전거 경로로 이어서 열어요."}
                     {" "}첫·마지막 도보 구간은 따라와잉 안내를 확인해 주세요.
                   </p>
                 </>

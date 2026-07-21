@@ -27,6 +27,10 @@ export type RouteGeometryInput = {
   transferStations?: Coordinates[];
 };
 
+export type RouteGeometryLoadOptions = {
+  signal?: AbortSignal;
+};
+
 type RouteProfile = "foot" | "bike";
 
 type OsrmRoute = {
@@ -180,23 +184,83 @@ export function createDirectRouteGeometry(input: RouteGeometryInput): RouteGeome
   };
 }
 
-function wait(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+function createAbortError() {
+  return new DOMException("The operation was aborted.", "AbortError");
 }
 
-function scheduleRequest<T>(request: () => Promise<T>) {
-  const scheduled = requestQueue.then(async () => {
+function isAbortError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AbortError"
+  );
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw createAbortError();
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal) {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+
+  return new Promise<T>((resolve, reject) => {
+    const handleAbort = () => {
+      cleanup();
+      reject(createAbortError());
+    };
+    const cleanup = () => signal.removeEventListener("abort", handleAbort);
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function wait(milliseconds: number, signal?: AbortSignal) {
+  throwIfAborted(signal);
+  if (milliseconds <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const handleAbort = () => {
+      window.clearTimeout(timeoutId);
+      reject(createAbortError());
+    };
+    const timeoutId = window.setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+function scheduleRequest<T>(request: () => Promise<T>, signal?: AbortSignal) {
+  throwIfAborted(signal);
+  const queuedRequest = requestQueue.then(async () => {
+    throwIfAborted(signal);
     const delay = Math.max(0, nextRequestAt - Date.now());
-    if (delay > 0) await wait(delay);
+    if (delay > 0) await wait(delay, signal);
+    throwIfAborted(signal);
     nextRequestAt = Date.now() + REQUEST_INTERVAL_MS;
     return request();
   });
 
-  requestQueue = scheduled.then(
+  requestQueue = queuedRequest.then(
     () => undefined,
     () => undefined,
   );
-  return scheduled;
+  return raceWithAbort(queuedRequest, signal);
 }
 
 function buildRouteUrl(profile: RouteProfile, routeCoordinates: Coordinates[]) {
@@ -335,7 +399,9 @@ type OsrmRouteResult = {
 async function requestOsrmRoute(
   profile: RouteProfile,
   coordinates: Coordinates[],
+  signal?: AbortSignal,
 ): Promise<OsrmRouteResult> {
+  throwIfAborted(signal);
   if (coordinates.length < 2 || coordinates.some((coordinate) => !isCoordinates(coordinate))) {
     throw new Error("Route coordinates are invalid.");
   }
@@ -349,22 +415,39 @@ async function requestOsrmRoute(
     throw new Error("Route is outside the prototype service area.");
   }
 
-  const response = await scheduleRequest(async () => {
+  const payload = await scheduleRequest(async () => {
+    throwIfAborted(signal);
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let timedOut = false;
+    const handleCallerAbort = () => controller.abort();
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+    signal?.addEventListener("abort", handleCallerAbort, { once: true });
     try {
-      return await fetch(buildRouteUrl(profile, coordinates), {
+      const pending = fetch(buildRouteUrl(profile, coordinates), {
         headers: { Accept: "application/json" },
         signal: controller.signal,
       });
+      const fetched = await raceWithAbort(pending, controller.signal);
+      throwIfAborted(signal);
+      if (!fetched.ok) throw new Error(`OSRM returned ${fetched.status}.`);
+      return (await raceWithAbort(
+        fetched.json() as Promise<OsrmResponse>,
+        controller.signal,
+      )) as OsrmResponse;
+    } catch (error) {
+      if (signal?.aborted) throw createAbortError();
+      if (timedOut) throw new Error("OSRM request timed out.");
+      throw error;
     } finally {
       window.clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", handleCallerAbort);
     }
-  });
+  }, signal);
 
-  if (!response.ok) throw new Error(`OSRM returned ${response.status}.`);
-
-  const payload = (await response.json()) as OsrmResponse;
+  throwIfAborted(signal);
   if (payload.code !== "Ok" || !Array.isArray(payload.routes) || !payload.routes.length) {
     throw new Error("OSRM could not find a route.");
   }
@@ -389,10 +472,12 @@ async function requestOsrmSegment(
   profile: RouteProfile,
   from: Coordinates,
   to: Coordinates,
+  signal?: AbortSignal,
 ): Promise<RouteSegment> {
   const { routeDistance, durationSeconds, path, waypoints } = await requestOsrmRoute(
     profile,
     [from, to],
+    signal,
   );
 
   if (shouldUseDirectCorrection(profile, from, to, routeDistance, waypoints)) {
@@ -409,9 +494,10 @@ async function requestOsrmSegment(
 
 async function requestOsrmBikeRoute(
   coordinates: Coordinates[],
+  signal?: AbortSignal,
 ): Promise<{ segment: RouteSegment; legs: BikeRouteLeg[] }> {
   const { route, routeDistance, path, waypoints } =
-    await requestOsrmRoute("bike", coordinates);
+    await requestOsrmRoute("bike", coordinates, signal);
   const from = coordinates[0];
   const to = coordinates[coordinates.length - 1];
 
@@ -468,12 +554,27 @@ function rememberSegment(key: string, segment: RouteSegment) {
   }
 }
 
-function loadSegment(profile: RouteProfile, from: Coordinates, to: Coordinates) {
+function loadSegment(
+  profile: RouteProfile,
+  from: Coordinates,
+  to: Coordinates,
+  signal?: AbortSignal,
+) {
+  throwIfAborted(signal);
   const key = segmentKey(profile, from, to);
   const resolved = resolvedSegmentCache.get(key);
   if (resolved) {
     rememberSegment(key, resolved);
     return Promise.resolve(resolved);
+  }
+
+  // A cancelable caller owns its request. It must not share an in-flight promise
+  // whose network signal could be canceled by a different route calculation.
+  if (signal) {
+    return requestOsrmSegment(profile, from, to, signal).then((segment) => {
+      rememberSegment(key, segment);
+      return segment;
+    });
   }
 
   const inFlight = inFlightSegmentCache.get(key);
@@ -502,12 +603,20 @@ function rememberBikeRoute(
   }
 }
 
-function loadBikeRoute(coordinates: Coordinates[]) {
+function loadBikeRoute(coordinates: Coordinates[], signal?: AbortSignal) {
+  throwIfAborted(signal);
   const key = bikeRouteKey(coordinates);
   const resolved = resolvedBikeRouteCache.get(key);
   if (resolved) {
     rememberBikeRoute(key, resolved);
     return Promise.resolve(resolved);
+  }
+
+  if (signal) {
+    return requestOsrmBikeRoute(coordinates, signal).then((route) => {
+      rememberBikeRoute(key, route);
+      return route;
+    });
   }
 
   const inFlight = inFlightBikeRouteCache.get(key);
@@ -525,33 +634,45 @@ function loadBikeRoute(coordinates: Coordinates[]) {
 
 export async function loadRouteGeometry(
   input: RouteGeometryInput,
+  signalOrOptions?: AbortSignal | RouteGeometryLoadOptions,
 ): Promise<RouteGeometry> {
+  const signal =
+    signalOrOptions && "signal" in signalOrOptions
+      ? signalOrOptions.signal
+      : signalOrOptions;
+  throwIfAborted(signal);
   const directGeometry = createDirectRouteGeometry(input);
   const result: RouteGeometry = { ...directGeometry };
 
   try {
-    result.walkTo = await loadSegment("foot", input.origin, input.startStation);
-  } catch {
+    result.walkTo = await loadSegment("foot", input.origin, input.startStation, signal);
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) throw createAbortError();
     result.walkTo = directGeometry.walkTo;
   }
 
   try {
-    const bikeRoute = await loadBikeRoute(getBikeCoordinates(input));
+    const bikeRoute = await loadBikeRoute(getBikeCoordinates(input), signal);
     result.bike = bikeRoute.segment;
     result.bikeLegs = bikeRoute.legs;
-  } catch {
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) throw createAbortError();
     result.bike = directGeometry.bike;
     result.bikeLegs = directGeometry.bikeLegs;
   }
 
   try {
-    result.walkFrom = await loadSegment("foot", input.endStation, input.destination);
-  } catch {
+    result.walkFrom = await loadSegment(
+      "foot",
+      input.endStation,
+      input.destination,
+      signal,
+    );
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) throw createAbortError();
     result.walkFrom = directGeometry.walkFrom;
   }
 
-  if ([result.walkTo, result.bike, result.walkFrom].every(({ source }) => source === "direct")) {
-    throw new Error("Road route geometry is temporarily unavailable.");
-  }
+  throwIfAborted(signal);
   return result;
 }

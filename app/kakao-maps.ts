@@ -104,24 +104,69 @@ declare global {
 const KAKAO_SDK_ID = "kakao-maps-javascript-sdk";
 const KAKAO_CONFIG_ENDPOINT = "/api/config/kakao";
 const SDK_LOAD_TIMEOUT_MS = 10_000;
+export const KAKAO_CONFIG_TIMEOUT_MS = 8_000;
+export const KAKAO_PLACE_SEARCH_TIMEOUT_MS = 8_000;
 
 let kakaoSdkPromise: Promise<KakaoSdk> | null = null;
 
-async function getJavascriptKey() {
-  const response = await fetch(KAKAO_CONFIG_ENDPOINT, {
-    headers: { accept: "application/json" },
+function runWithTimeout<T>(
+  timeoutMs: number,
+  timeoutMessage: string,
+  operation: (signal: AbortSignal) => Promise<T>,
+) {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      callback();
+    };
+    const controller = new AbortController();
+    const timeoutId = globalThis.setTimeout(() => {
+      const timeoutError = new Error(timeoutMessage);
+      finish(() => {
+        reject(timeoutError);
+        controller.abort(timeoutError);
+      });
+    }, timeoutMs);
+
+    void Promise.resolve()
+      .then(() => operation(controller.signal))
+      .then(
+        (value) => finish(() => resolve(value)),
+        (error: unknown) => finish(() => reject(error)),
+      );
   });
+}
 
-  if (!response.ok) {
-    throw new Error("Kakao Maps configuration is unavailable.");
-  }
+export async function getKakaoJavascriptKey(
+  timeoutMs = KAKAO_CONFIG_TIMEOUT_MS,
+) {
+  return runWithTimeout(
+    timeoutMs,
+    "Kakao Maps configuration request timed out.",
+    async (signal) => {
+      const response = await fetch(KAKAO_CONFIG_ENDPOINT, {
+        headers: { accept: "application/json" },
+        signal,
+      });
 
-  const body = (await response.json()) as { javascriptKey?: unknown };
-  if (typeof body.javascriptKey !== "string" || !body.javascriptKey.trim()) {
-    throw new Error("Kakao Maps JavaScript key is missing.");
-  }
+      if (!response.ok) {
+        throw new Error("Kakao Maps configuration is unavailable.");
+      }
 
-  return body.javascriptKey;
+      const body = (await response.json()) as { javascriptKey?: unknown };
+      if (
+        typeof body.javascriptKey !== "string" ||
+        !body.javascriptKey.trim()
+      ) {
+        throw new Error("Kakao Maps JavaScript key is missing.");
+      }
+
+      return body.javascriptKey;
+    },
+  );
 }
 
 function initializeKakaoSdk(resolve: (sdk: KakaoSdk) => void, reject: (error: Error) => void) {
@@ -151,7 +196,7 @@ export function loadKakaoMapsSdk() {
 
   if (kakaoSdkPromise) return kakaoSdkPromise;
 
-  const pendingSdk = getJavascriptKey().then(
+  const pendingSdk = getKakaoJavascriptKey().then(
     (javascriptKey) =>
       new Promise<KakaoSdk>((resolve, reject) => {
         let settled = false;
@@ -218,28 +263,51 @@ export function loadKakaoMapsSdk() {
   return pendingSdk;
 }
 
-function searchKakaoKeyword(sdk: KakaoSdk, keyword: string) {
+export function searchKakaoKeyword(
+  sdk: KakaoSdk,
+  keyword: string,
+  timeoutMs = KAKAO_PLACE_SEARCH_TIMEOUT_MS,
+) {
   return new Promise<KakaoPlaceResult[]>((resolve, reject) => {
-    const places = new sdk.maps.services.Places();
-    places.keywordSearch(
-      keyword,
-      (results, status) => {
-        if (status === sdk.maps.services.Status.OK) {
-          resolve(results);
-          return;
-        }
-        if (status === sdk.maps.services.Status.ZERO_RESULT) {
-          resolve([]);
-          return;
-        }
-        reject(new Error("Kakao place search failed."));
-      },
-      {
-        page: 1,
-        size: 10,
-        sort: sdk.maps.services.SortBy.ACCURACY,
-      },
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      callback();
+    };
+    const timeoutId = globalThis.setTimeout(
+      () =>
+        finish(() =>
+          reject(new Error("Kakao place search request timed out.")),
+        ),
+      timeoutMs,
     );
+
+    try {
+      const places = new sdk.maps.services.Places();
+      places.keywordSearch(
+        keyword,
+        (results, status) => {
+          if (status === sdk.maps.services.Status.OK) {
+            finish(() => resolve(results));
+            return;
+          }
+          if (status === sdk.maps.services.Status.ZERO_RESULT) {
+            finish(() => resolve([]));
+            return;
+          }
+          finish(() => reject(new Error("Kakao place search failed.")));
+        },
+        {
+          page: 1,
+          size: 10,
+          sort: sdk.maps.services.SortBy.ACCURACY,
+        },
+      );
+    } catch (error) {
+      finish(() => reject(error));
+    }
   });
 }
 

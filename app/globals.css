@@ -75,6 +75,7 @@ input:focus-visible {
 
 .brand {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   gap: 11px;
   color: var(--ink);
@@ -244,7 +245,7 @@ input:focus-visible {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 36px;
+  min-height: 44px;
   cursor: pointer;
   place-items: center;
   overflow: hidden;
@@ -307,11 +308,14 @@ input:focus-visible {
 }
 
 .location-link {
+  position: relative;
   display: inline-flex;
+  min-height: 44px;
   cursor: pointer;
   align-items: center;
   gap: 3px;
-  padding: 0;
+  margin: -14px -4px;
+  padding: 0 4px;
   border: 0;
   background: transparent;
   color: var(--green-dark);
@@ -373,14 +377,26 @@ input:focus-visible {
 }
 
 .clear-field {
+  position: absolute;
+  z-index: 1;
   display: grid;
-  width: 25px;
-  height: 25px;
+  width: 44px;
+  height: 44px;
   cursor: pointer;
   place-items: center;
   border: 0;
   border-radius: 50%;
+  background: transparent;
+}
+
+.clear-field::before {
+  position: absolute;
+  z-index: -1;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
   background: #edf1ee;
+  content: "";
 }
 
 .suggestions {
@@ -496,19 +512,33 @@ input:focus-visible {
 }
 
 .swap-button {
+  position: relative;
+  z-index: 1;
   display: grid;
-  width: 31px;
-  height: 31px;
+  width: 44px;
+  height: 44px;
   flex: 0 0 auto;
   cursor: pointer;
   place-items: center;
-  margin: 0;
+  margin: -6.5px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #617069;
+  box-shadow: none;
+  transition: color 150ms ease, transform 150ms ease;
+}
+
+.swap-button::before {
+  position: absolute;
+  z-index: -1;
+  width: 31px;
+  height: 31px;
   border: 1px solid #dbe4de;
   border-radius: 9px;
   background: white;
-  color: #617069;
   box-shadow: 0 4px 12px rgba(32, 53, 44, 0.08);
-  transition: color 150ms ease, transform 150ms ease;
+  content: "";
 }
 
 .swap-button:hover {
@@ -556,7 +586,7 @@ input:focus-visible {
 .reset-route-button {
   display: flex;
   width: calc(100% - 26px);
-  height: 42px;
+  height: 44px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
@@ -599,7 +629,7 @@ input:focus-visible {
 
 .route-history button {
   max-width: 100%;
-  height: 28px;
+  min-height: 44px;
   overflow: hidden;
   cursor: pointer;
   padding: 0 9px;
@@ -787,6 +817,25 @@ input:focus-visible {
   color: #a2651a;
 }
 
+.route-geometry-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f1d1bd;
+  border-radius: 10px;
+  background: #fff8f3;
+  color: #8a5130;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.route-geometry-warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .pass-route-safe {
   margin: 10px 2px 0;
   color: #668077;
@@ -797,6 +846,7 @@ input:focus-visible {
 .details-toggle {
   display: flex;
   width: 100%;
+  min-height: 44px;
   cursor: pointer;
   align-items: center;
   justify-content: space-between;
@@ -839,6 +889,7 @@ input:focus-visible {
 .timeline-focus-button {
   display: grid;
   width: 100%;
+  min-height: 44px;
   cursor: pointer;
   grid-template-columns: 31px minmax(0, 1fr);
   gap: 11px;
@@ -996,6 +1047,7 @@ input:focus-visible {
 .station-focus-button {
   display: block;
   width: 100%;
+  min-height: 44px;
   cursor: pointer;
   padding: 5px;
   border: 0;
@@ -1110,11 +1162,12 @@ input:focus-visible {
 
 .alternative-toggle {
   display: inline-flex;
+  min-height: 44px;
   cursor: pointer;
   align-items: center;
   gap: 2px;
-  margin-top: 9px;
-  padding: 0;
+  margin: 2px 0 -7px;
+  padding: 0 2px;
   border: 0;
   background: transparent;
   color: var(--green-dark);
@@ -1134,6 +1187,7 @@ input:focus-visible {
 .alternative-list button {
   display: grid;
   width: 100%;
+  min-height: 44px;
   cursor: pointer;
   grid-template-columns: minmax(0, 1fr) auto 15px;
   gap: 6px;
@@ -1386,12 +1440,12 @@ input:focus-visible {
 }
 
 .map-canvas .leaflet-control-zoom a {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border-color: #e3e9e5;
   color: #536159;
   font-size: 18px;
-  line-height: 34px;
+  line-height: 44px;
 }
 
 .route-marker-wrapper {
@@ -1673,8 +1727,8 @@ input:focus-visible {
 
 .map-location-control {
   display: inline-flex;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   cursor: pointer;
   align-items: center;
   justify-content: center;

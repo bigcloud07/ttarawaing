@@ -78,8 +78,8 @@ test("stores and reopens recent route history on this device", async () => {
   );
 
   assert.match(pageSource, /ROUTE_HISTORY_STORAGE_KEY/);
-  assert.match(pageSource, /window\.localStorage\.getItem/);
-  assert.match(pageSource, /window\.localStorage\.setItem/);
+  assert.match(pageSource, /readStoredValue\(window\.localStorage/);
+  assert.match(pageSource, /writeStoredValue\([\s\S]*window\.localStorage/);
   assert.match(pageSource, /\.slice\(0, ROUTE_HISTORY_LIMIT\)/);
   assert.match(
     pageSource,
@@ -108,8 +108,14 @@ test("defaults to a remembered one, two, three-hour, or unlimited pass choice", 
   assert.match(pageSource, /type="radio"/);
   assert.match(pageSource, /name="bike-pass"/);
   assert.match(pageSource, /checked=\{passType === option\.value\}/);
-  assert.match(pageSource, /window\.localStorage\.getItem\(PASS_TYPE_STORAGE_KEY\)/);
-  assert.match(pageSource, /window\.localStorage\.setItem\(PASS_TYPE_STORAGE_KEY/);
+  assert.match(
+    pageSource,
+    /readStoredValue\([\s\S]*window\.localStorage,[\s\S]*PASS_TYPE_STORAGE_KEY/,
+  );
+  assert.match(
+    pageSource,
+    /writeStoredValue\(window\.localStorage, PASS_TYPE_STORAGE_KEY/,
+  );
   assert.match(planningSource, /DEFAULT_PASS_TYPE: PassType = "60"/);
 });
 
@@ -161,34 +167,51 @@ test("selects distinct ordered stations along the actual route corridor", () => 
 });
 
 test("builds and validates the minimum number of road-routed transfer stops", async () => {
-  const [pageSource, routeSource] = await Promise.all([
+  const [pageSource, routeSource, recommendationSource] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/route-geometry.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/pass-route-recommendation.ts", import.meta.url),
+      "utf8",
+    ),
   ]);
 
-  assert.match(pageSource, /let stopCount = Math\.max\(1, initialStopCount\)/);
-  assert.match(pageSource, /stopCount \+= 1/);
-  assert.match(pageSource, /MAX_TRANSFER_COMBINATIONS_PER_STOP_COUNT = 4/);
-  assert.doesNotMatch(pageSource, /MAX_TOTAL_TRANSFER_ROUTE_ATTEMPTS/);
-  assert.match(pageSource, /const exclusionQueue: Set<string>\[\]/);
-  assert.match(pageSource, /triedStationSequences/);
-  assert.match(pageSource, /selectRouteCorridorStations/);
-  assert.match(pageSource, /areBikeLegsWithinPassLimit\(bikeLegMinutes, passType\)/);
-  assert.match(pageSource, /geometry\.bikeLegs\.every\(\(leg\) => leg\.source === "osrm"\)/);
+  assert.match(pageSource, /recommendPassTransferRoute\(\{/);
+  assert.match(pageSource, /ROUTE_RECOMMENDATION_TIMEOUT_MS = 60_000/);
+  assert.match(pageSource, /controller\.abort\(\)/);
+  assert.match(recommendationSource, /let stopCount = Math\.max\(1, initialStopCount\)/);
+  assert.match(recommendationSource, /stopCount \+= 1/);
+  assert.match(
+    recommendationSource,
+    /DEFAULT_MAXIMUM_COMBINATIONS_PER_STOP_COUNT = 4/,
+  );
+  assert.match(recommendationSource, /const exclusionQueue: Set<string>\[\]/);
+  assert.match(recommendationSource, /triedStationSequences/);
+  assert.match(recommendationSource, /selectRouteCorridorStations/);
+  assert.match(
+    recommendationSource,
+    /areBikeLegsWithinPassLimit\(bikeLegMinutes, passType\)/,
+  );
+  assert.match(
+    recommendationSource,
+    /geometry\.bikeLegs\.every\(\(leg\) => leg\.source === "osrm"\)/,
+  );
+  assert.match(recommendationSource, /catch \(error: unknown\)[\s\S]*continue;/);
   assert.match(routeSource, /transferStations\?: Coordinates\[\]/);
   assert.match(routeSource, /route\.legs/);
-  assert.match(routeSource, /loadBikeRoute\(getBikeCoordinates\(input\)\)/);
+  assert.match(routeSource, /loadBikeRoute\(getBikeCoordinates\(input\), signal\)/);
   assert.match(routeSource, /bikeLegs: BikeRouteLeg\[\]/);
   assert.match(routeSource, /attachRequestedWaypoints\(path, coordinates\)/);
   assert.match(routeSource, /connectorDistance \/ bicycleMetersPerSecond/);
-  assert.match(pageSource, /if \(!active\) return;[\s\S]*const safeRideMinutes/);
-  assert.match(pageSource, /const geometry = await loadRouteGeometry[\s\S]*if \(!active\) return;/);
+  assert.match(routeSource, /throwIfAborted\(signal\)/);
+  assert.match(routeSource, /raceWithAbort/);
 });
 
 test("shows transfer stops consistently in the timeline, maps, and Kakao continuation", async () => {
-  const [pageSource, styles] = await Promise.all([
+  const [pageSource, styles, kakaoGroupsSource] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/kakao-route-groups.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(pageSource, /bikeLegs\.map\(\(leg, index\)/);
@@ -197,9 +220,10 @@ test("shows transfer stops consistently in the timeline, maps, and Kakao continu
   assert.match(pageSource, /transferStops\.length \+ 2/);
   assert.equal((pageSource.match(/transferStops\.forEach\(\(station, index\)/g) ?? []).length, 2);
   assert.match(pageSource, /\.\.\.transferStops/);
-  assert.match(pageSource, /모든 경유 지점을 하나의 자전거 경로로 열어요/);
-  assert.match(pageSource, /const KAKAO_MAX_WAYPOINTS = 5/);
-  assert.match(pageSource, /startIndex \+= group\.length - 1/);
+  assert.match(pageSource, /카카오맵 자전거 경로로 이어서 열어요/);
+  assert.doesNotMatch(pageSource, /모든 경유 지점을 하나의 자전거 경로로 열어요/);
+  assert.match(kakaoGroupsSource, /KAKAO_MAX_WAYPOINTS = 5/);
+  assert.match(kakaoGroupsSource, /startIndex \+= group\.length - 1/);
   assert.match(pageSource, /카카오맵 경유지 제한에 맞춰/);
   assert.doesNotMatch(pageSource, /4개 지점 자동 입력|네 지점을 하나의/);
   assert.match(pageSource, /이 경로를 이용권에 안전한 경로라고 안내할 수 없어요/);
@@ -309,7 +333,7 @@ test("tracks live location, then enables heading from the lower-right map contro
   assert.match(guideControlsRule, /right:\s*20px/);
   assert.match(guideControlsRule, /bottom:\s*20px/);
   assert.match(guideControlsRule, /align-items:\s*flex-end/);
-  assert.match(locationControlRule, /width:\s*40px/);
+  assert.match(locationControlRule, /width:\s*44px/);
   assert.match(locationControlRule, /justify-content:\s*center/);
   assert.match(styles, /\.current-location-direction\s*\{/);
   assert.match(styles, /rotate\(var\(--location-heading\)\)/);
@@ -371,6 +395,24 @@ test("does not imply live return-station availability", async () => {
 
   assert.doesNotMatch(pageSource, /운영 확인|운영 목록 기준/);
   assert.match(pageSource, /반납[\s\S]{0,40}가능 여부와 경로 시간은 실제 출발 전/);
+});
+
+test("uses clear unavailable-data copy and exposes fallback route warnings", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(pageSource, /수량 미확인/);
+  assert.doesNotMatch(pageSource, /현황 확인 필요|실시간 정보 없음/);
+  assert.match(pageSource, /도로 경로를 불러오지 못해 전 구간을 직선거리로 예상했어요/);
+  assert.match(pageSource, /className="route-geometry-warning" role="alert"/);
+  assert.match(pageSource, /aria-selected=\{index === boundedActiveIndex\}/);
+  assert.match(pageSource, /기본 장소를 보여드려요/);
+  assert.match(
+    styles,
+    /\.map-canvas \.leaflet-control-zoom a\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s,
+  );
 });
 
 test("skips an empty nearest rental station and explains the substitution", async () => {
@@ -476,10 +518,13 @@ test("focuses the map when each route timeline place is selected", async () => {
 });
 
 test("summarizes route time as icon and duration in travel order", async () => {
-  const pageSource = await readFile(
-    new URL("../app/page.tsx", import.meta.url),
-    "utf8",
-  );
+  const [pageSource, recommendationSource] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/pass-route-recommendation.ts", import.meta.url),
+      "utf8",
+    ),
+  ]);
 
   assert.match(pageSource, /<Footprints[^>]*\/> \{plan\.walkToMinutes\}분/);
   assert.match(pageSource, /<Bike[^>]*\/> \{plan\.bikeMinutes\}분/);
@@ -491,8 +536,8 @@ test("summarizes route time as icon and duration in travel order", async () => {
     /const totalMinutes = walkToMinutes \+ bikeMinutes \+ walkFromMinutes;/,
   );
   assert.match(
-    pageSource,
-    /transferStopCount \* TRANSFER_STOP_OVERHEAD_MINUTES/,
+    recommendationSource,
+    /Math\.trunc\(transferStopCount\)\) \* TRANSFER_STOP_OVERHEAD_MINUTES/,
   );
   assert.doesNotMatch(pageSource, /환승 2분/);
   assert.doesNotMatch(
