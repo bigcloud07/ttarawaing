@@ -653,6 +653,18 @@ input:focus-visible {
   font-weight: 570;
 }
 
+.mode-labels .walk-to-label svg {
+  color: var(--blue);
+}
+
+.mode-labels .bike-label svg {
+  color: var(--green-dark);
+}
+
+.mode-labels .walk-from-label svg {
+  color: var(--coral);
+}
+
 .details-toggle {
   display: flex;
   width: 100%;

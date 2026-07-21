@@ -7,7 +7,6 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-  Clock3,
   Crosshair,
   ExternalLink,
   Footprints,
@@ -480,7 +479,7 @@ function buildPlan(
   const walkToMinutes = Math.max(2, Math.ceil(walkToMeters / 76));
   const bikeMinutes = Math.max(5, Math.ceil(bikeMeters / 245));
   const walkFromMinutes = Math.max(2, Math.ceil(walkFromMeters / 76));
-  const totalMinutes = walkToMinutes + bikeMinutes + walkFromMinutes + 2;
+  const totalMinutes = walkToMinutes + bikeMinutes + walkFromMinutes;
 
   return {
     origin,
@@ -1917,14 +1916,14 @@ export default function Home() {
                   />
                 </div>
                 <div className="mode-labels">
-                  <span>
-                    <Footprints size={14} aria-hidden="true" /> 걷기 {plan.walkToMinutes + plan.walkFromMinutes}분
+                  <span className="walk-to-label">
+                    <Footprints size={14} aria-hidden="true" /> 출발 대여소까지 도보 {plan.walkToMinutes}분
                   </span>
-                  <span>
+                  <span className="bike-label">
                     <Bike size={15} aria-hidden="true" /> 따릉이 {plan.bikeMinutes}분
                   </span>
-                  <span>
-                    <Clock3 size={14} aria-hidden="true" /> 환승 2분
+                  <span className="walk-from-label">
+                    <Footprints size={14} aria-hidden="true" /> 도착지까지 도보 {plan.walkFromMinutes}분
                   </span>
                 </div>
               </div>
