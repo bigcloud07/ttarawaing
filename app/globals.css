@@ -1235,13 +1235,12 @@ input:focus-visible {
 .route-marker-wrapper::after {
   position: absolute;
   top: 32px;
-  left: 50%;
+  left: 0;
   width: 12px;
   height: 10px;
   background: var(--route-marker-color);
-  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
   content: "";
-  transform: translateX(-50%);
 }
 
 .route-marker-wrapper.origin-marker-wrapper {

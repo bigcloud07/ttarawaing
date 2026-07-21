@@ -253,22 +253,22 @@ test("uses full start and destination labels on both map providers", async () =>
   assert.match(styles, /\.route-marker\.destination-marker\s*\{[^}]*width:\s*42px/s);
 });
 
-test("anchors every route marker at the visible pointer tip", async () => {
+test("anchors every route marker by its lower-left pointer tip", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
   assert.match(pageSource, /iconSize:\s*\[42, 42\]/);
-  assert.match(pageSource, /iconAnchor:\s*\[21, 42\]/);
-  assert.match(pageSource, /xAnchor:\s*0\.5,\s*\n\s*yAnchor:\s*1/);
+  assert.match(pageSource, /iconAnchor:\s*\[0, 42\]/);
+  assert.match(pageSource, /xAnchor:\s*0,\s*\n\s*yAnchor:\s*1/);
   assert.match(
     styles,
     /\.route-marker-wrapper\s*\{[^}]*width:\s*42px[^}]*height:\s*42px/s,
   );
   assert.match(
     styles,
-    /\.route-marker-wrapper::after\s*\{[^}]*top:\s*32px[^}]*height:\s*10px/s,
+    /\.route-marker-wrapper::after\s*\{[^}]*top:\s*32px[^}]*left:\s*0[^}]*height:\s*10px[^}]*clip-path:\s*polygon\(0 0, 100% 0, 0 100%\)/s,
   );
   assert.match(pageSource, /\$\{className\}-wrapper/);
 });

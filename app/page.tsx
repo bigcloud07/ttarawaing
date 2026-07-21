@@ -957,10 +957,10 @@ function LeafletRouteMap({
             className: `route-marker-wrapper ${className}-wrapper`,
             html: `<span class="route-marker ${className}">${label}</span>`,
             iconSize: [42, 42],
-            iconAnchor: [21, 42],
+            iconAnchor: [0, 42],
           }),
         })
-          .bindTooltip(tooltip, { direction: "top", offset: [0, -38] })
+          .bindTooltip(tooltip, { direction: "top", offset: [21, -38] })
           .addTo(group);
       };
 
@@ -1268,7 +1268,7 @@ function KakaoRouteMap({
         map,
         position: toLatLng(coordinates),
         content: wrapper,
-        xAnchor: 0.5,
+        xAnchor: 0,
         yAnchor: 1,
         zIndex: 4,
       });
