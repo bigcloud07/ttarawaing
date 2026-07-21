@@ -1576,9 +1576,6 @@ export default function Home() {
                           </small>
                           <strong>{plan.endStation.name}</strong>
                         </div>
-                        <span className="availability status-unlinked">
-                          {liveBikeStatus === "ready" ? "운영 확인" : "운영 목록 기준"}
-                        </span>
                       </div>
                       <p>{plan.endStation.address}</p>
                       <button

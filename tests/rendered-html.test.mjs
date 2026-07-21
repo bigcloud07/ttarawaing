@@ -84,6 +84,16 @@ test("keeps the place-swap control in flow between the two input boxes", async (
   assert.match(pageSource, /onSwap=\{swapPlaces\}/);
 });
 
+test("does not imply live return-station availability", async () => {
+  const pageSource = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(pageSource, /운영 확인|운영 목록 기준/);
+  assert.match(pageSource, /반납 가능 여부와 경로 시간은 실제 출발 전/);
+});
+
 test("uses full start and destination labels on both map providers", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
