@@ -7,7 +7,6 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-  CircleHelp,
   Clock3,
   Crosshair,
   ExternalLink,
@@ -1394,15 +1393,6 @@ export default function Home() {
             <small>따릉이로 잇는 서울</small>
           </span>
         </a>
-        <div className="header-actions">
-          <span className="service-badge">
-            <span />
-            카카오맵 연동
-          </span>
-          <button className="icon-button" type="button" aria-label="도움말">
-            <CircleHelp size={19} aria-hidden="true" />
-          </button>
-        </div>
       </header>
 
       <div className="workspace" id="top">

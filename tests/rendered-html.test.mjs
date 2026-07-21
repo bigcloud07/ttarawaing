@@ -41,7 +41,7 @@ test("server-renders the ttarawaing route planner", async () => {
   assert.match(html, /카카오맵에서 이어보기/);
   assert.match(html, /출발 · 대여 · 반납 · 도착 4개 지점 자동 입력/);
   assert.doesNotMatch(html, /nmap:\/\/|네이버 지도/);
-  assert.match(html, /카카오맵 연동/);
+  assert.doesNotMatch(html, /카카오맵 연동|aria-label="도움말"/);
   assert.match(html, /카카오맵 실제 데이터/);
   assert.match(html, /실제 도로 경로 계산 중/);
   assert.doesNotMatch(html, /실제 장소 · 예상 경로/);
