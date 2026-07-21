@@ -62,6 +62,7 @@ type RoutePlan = {
   origin: Place;
   destination: Place;
   startStation: Station;
+  startStationAdjustedForAvailability: boolean;
   endStation: Station;
   alternatives: Station[];
   walkToMeters: number;
@@ -409,13 +410,28 @@ function usePlaceSuggestions(query: string, open: boolean): PlaceSearchState {
   };
 }
 
-function nearestStartStation(place: Place, stations: Station[]) {
-  return [...stations]
-    .sort(
-      (a, b) =>
-        distanceMeters(place.coordinates, a.coordinates) -
-        distanceMeters(place.coordinates, b.coordinates),
-    )[0];
+function selectStartStation(place: Place, stations: Station[]) {
+  const rankedStations = [...stations].sort(
+    (a, b) =>
+      distanceMeters(place.coordinates, a.coordinates) -
+      distanceMeters(place.coordinates, b.coordinates),
+  );
+  const nearestStation = rankedStations[0];
+  if (!nearestStation) throw new Error("Bike station catalog is empty.");
+
+  if (nearestStation.bikes !== 0) {
+    return { station: nearestStation, adjustedForAvailability: false };
+  }
+
+  const nearestAvailableStation = rankedStations.find(
+    (station) => station.bikes !== null && station.bikes > 0,
+  );
+  return {
+    station: nearestAvailableStation ?? nearestStation,
+    adjustedForAvailability:
+      nearestAvailableStation !== undefined &&
+      nearestAvailableStation.id !== nearestStation.id,
+  };
 }
 
 function rankedEndStations(place: Place, stations: Station[]) {
@@ -434,7 +450,10 @@ function buildPlan(
   stations: Station[],
   endStationId?: string,
 ): RoutePlan {
-  const startStation = nearestStartStation(origin, stations);
+  const {
+    station: startStation,
+    adjustedForAvailability: startStationAdjustedForAvailability,
+  } = selectStartStation(origin, stations);
   const alternatives = rankedEndStations(destination, stations);
   const endStation =
     alternatives.find((station) => station.id === endStationId) ?? alternatives[0];
@@ -457,6 +476,7 @@ function buildPlan(
     origin,
     destination,
     startStation,
+    startStationAdjustedForAvailability,
     endStation,
     alternatives,
     walkToMeters,
@@ -1831,12 +1851,16 @@ export default function Home() {
                     <div className="station-card-copy">
                       <div className="station-title-line">
                         <div>
-                          <small>가장 가까운 대여소</small>
+                          <small>
+                            {plan.startStationAdjustedForAvailability
+                              ? "가까운 최적 대여소"
+                              : "가장 가까운 대여소"}
+                          </small>
                           <strong>{plan.startStation.name}</strong>
                         </div>
                         <span
                           className={`availability ${
-                            liveBikeStatus !== "ready"
+                            liveBikeStatus !== "ready" || plan.startStation.bikes === null
                               ? "status-unlinked"
                               : plan.startStation.bikes === 0
                                 ? "bikes-empty"
@@ -1855,6 +1879,12 @@ export default function Home() {
                         </span>
                       </div>
                       <p>{plan.startStation.address}</p>
+                      {plan.startStationAdjustedForAvailability ? (
+                        <p className="start-station-adjustment-note" role="status">
+                          현재 가장 가까운 정류소의 따릉이가 없어서 다른 최적의 대여소를
+                          알려드렸어요!
+                        </p>
+                      ) : null}
                     </div>
                   </li>
                   <li className="timeline-segment bike-segment">

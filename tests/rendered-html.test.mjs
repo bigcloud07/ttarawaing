@@ -218,6 +218,26 @@ test("does not imply live return-station availability", async () => {
   assert.match(pageSource, /반납 가능 여부와 경로 시간은 실제 출발 전/);
 });
 
+test("skips an empty nearest rental station and explains the substitution", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(pageSource, /nearestStation\.bikes !== 0/);
+  assert.match(
+    pageSource,
+    /station\.bikes !== null && station\.bikes > 0/,
+  );
+  assert.match(pageSource, /startStationAdjustedForAvailability/);
+  assert.match(
+    pageSource,
+    /현재 가장 가까운 정류소의 따릉이가 없어서 다른 최적의 대여소를/,
+  );
+  assert.match(pageSource, /알려드렸어요!/);
+  assert.match(styles, /\.start-station-adjustment-note\s*\{/);
+});
+
 test("uses full start and destination labels on both map providers", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

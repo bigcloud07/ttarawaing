@@ -876,6 +876,16 @@ input:focus-visible {
   font-size: 9px;
 }
 
+.station-card-copy > .start-station-adjustment-note {
+  margin-top: 9px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: #fff6dc;
+  color: #82621a;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .best-badge {
   display: inline-flex;
   margin-left: 5px;
