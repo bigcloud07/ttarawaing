@@ -166,6 +166,20 @@ test("fills the desktop map to the top beside the left-only header", async () =>
   assert.match(mapPanelRule, /height:\s*100vh/);
 });
 
+test("centers the route feedback popup over the desktop map area", async () => {
+  const styles = await readFile(
+    new URL("../app/globals.css", import.meta.url),
+    "utf8",
+  );
+  const toastRule = styles.match(/\.toast\s*\{([^}]+)\}/)?.[1] ?? "";
+
+  assert.match(toastRule, /left:\s*calc\(50% \+ 227\.5px\)/);
+  assert.match(
+    styles,
+    /@media \(max-width: 900px\)[\s\S]*?\.toast\s*\{[^}]*left:\s*50%/,
+  );
+});
+
 test("keeps the place-swap control in flow between the two input boxes", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

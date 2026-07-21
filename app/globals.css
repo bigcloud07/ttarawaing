@@ -1552,7 +1552,7 @@ input:focus-visible {
   position: fixed;
   z-index: 2000;
   top: 86px;
-  left: 50%;
+  left: calc(50% + 227.5px);
   display: flex;
   min-width: 240px;
   align-items: center;
@@ -1590,6 +1590,10 @@ input:focus-visible {
 @media (max-width: 900px) {
   .app-shell {
     overflow: visible;
+  }
+
+  .toast {
+    left: 50%;
   }
 
   .topbar {
