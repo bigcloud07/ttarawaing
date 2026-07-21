@@ -75,6 +75,11 @@ type RoutePlan = {
   calories: number;
 };
 
+type RouteHistoryItem = {
+  origin: Place;
+  destination: Place;
+};
+
 const PLACES: Place[] = [
   {
     id: "gwanghwamun",
@@ -263,11 +268,49 @@ async function fetchRealtimeBikeAvailability(signal: AbortSignal) {
   throw new Error("Realtime bike status request failed.");
 }
 
-const QUICK_ROUTES = [
-  { label: "망원시장 → 더현대", origin: "mangwon-market", destination: "the-hyundai-seoul" },
-  { label: "광화문 → 서울숲", origin: "gwanghwamun", destination: "seoul-forest" },
-  { label: "홍대 → 여의도", origin: "hongdae", destination: "yeouido-park" },
-];
+const ROUTE_HISTORY_STORAGE_KEY = "ttarawaing-route-history-v1";
+const ROUTE_HISTORY_LIMIT = 3;
+
+function isStoredPlace(value: unknown): value is Place {
+  if (!value || typeof value !== "object") return false;
+  const place = value as Partial<Place>;
+  return (
+    typeof place.id === "string" &&
+    typeof place.name === "string" &&
+    typeof place.address === "string" &&
+    typeof place.hint === "string" &&
+    Array.isArray(place.coordinates) &&
+    place.coordinates.length === 2 &&
+    place.coordinates.every((coordinate) => Number.isFinite(coordinate))
+  );
+}
+
+function parseRouteHistory(serialized: string | null): RouteHistoryItem[] {
+  if (!serialized) return [];
+  try {
+    const value: unknown = JSON.parse(serialized);
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((item): item is RouteHistoryItem => {
+        if (!item || typeof item !== "object") return false;
+        const route = item as Partial<RouteHistoryItem>;
+        return (
+          isStoredPlace(route.origin) &&
+          isStoredPlace(route.destination) &&
+          route.origin.id !== route.destination.id
+        );
+      })
+      .slice(0, ROUTE_HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function routeHistoryKey(route: RouteHistoryItem) {
+  const originCoordinates = route.origin.coordinates.join(",");
+  const destinationCoordinates = route.destination.coordinates.join(",");
+  return `${route.origin.id}:${originCoordinates}->${route.destination.id}:${destinationCoordinates}`;
+}
 
 function distanceMeters(a: Coordinates, b: Coordinates) {
   const radius = 6_371_000;
@@ -1248,6 +1291,7 @@ export default function Home() {
     origin: Place;
     destination: Place;
   } | null>(null);
+  const [routeHistory, setRouteHistory] = useState<RouteHistoryItem[]>([]);
   const [selectedEndStationId, setSelectedEndStationId] = useState<string>();
   const [alternativesOpen, setAlternativesOpen] = useState(false);
   const [routeDetailsOpen, setRouteDetailsOpen] = useState(true);
@@ -1257,6 +1301,20 @@ export default function Home() {
   const [liveBikeStatus, setLiveBikeStatus] = useState<
     "loading" | "ready" | "unavailable"
   >("loading");
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        setRouteHistory(
+          parseRouteHistory(window.localStorage.getItem(ROUTE_HISTORY_STORAGE_KEY)),
+        );
+      } catch {
+        setRouteHistory([]);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1306,6 +1364,35 @@ export default function Home() {
     [plan],
   );
 
+  const rememberRoute = useCallback((route: RouteHistoryItem) => {
+    if (
+      route.origin.id === "current-location" ||
+      route.destination.id === "current-location"
+    ) {
+      return;
+    }
+
+    setRouteHistory((currentHistory) => {
+      const nextRouteKey = routeHistoryKey(route);
+      const nextHistory = [
+        route,
+        ...currentHistory.filter(
+          (historyItem) => routeHistoryKey(historyItem) !== nextRouteKey,
+        ),
+      ].slice(0, ROUTE_HISTORY_LIMIT);
+
+      try {
+        window.localStorage.setItem(
+          ROUTE_HISTORY_STORAGE_KEY,
+          JSON.stringify(nextHistory),
+        );
+      } catch {
+        // The current session still keeps its history when storage is unavailable.
+      }
+      return nextHistory;
+    });
+  }, []);
+
   const commitRoute = useCallback(
     (nextOrigin?: Place | null, nextDestination?: Place | null) => {
       const resolvedOrigin = nextOrigin ?? origin;
@@ -1328,12 +1415,13 @@ export default function Home() {
         origin: resolvedOrigin,
         destination: resolvedDestination,
       });
+      rememberRoute({ origin: resolvedOrigin, destination: resolvedDestination });
       setSelectedEndStationId(undefined);
       setAlternativesOpen(false);
       setErrorMessage("");
       setNotice("가장 편한 따릉이 경로를 찾았어요.");
       window.setTimeout(() => setNotice(""), 2800);
-    }, [destination, origin],
+    }, [destination, origin, rememberRoute],
   );
 
   const selectOrigin = (place: Place) => {
@@ -1385,15 +1473,6 @@ export default function Home() {
     setOriginQuery(nextOriginQuery);
     setDestinationQuery(nextDestinationQuery);
     setErrorMessage("");
-  };
-
-  const chooseQuickRoute = (originId: string, destinationId: string) => {
-    const nextOrigin = PLACES.find((place) => place.id === originId) ?? PLACES[0];
-    const nextDestination =
-      PLACES.find((place) => place.id === destinationId) ?? PLACES[1];
-    selectOrigin(nextOrigin);
-    selectDestination(nextDestination);
-    commitRoute(nextOrigin, nextDestination);
   };
 
   return (
@@ -1474,18 +1553,29 @@ export default function Home() {
                 <ArrowRight className="button-arrow" size={18} aria-hidden="true" />
               </button>
 
-              <div className="quick-routes" aria-label="추천 경로">
-                <span>빠른 선택</span>
+              <div className="route-history" aria-label="최근 검색 경로">
+                <span>히스토리</span>
                 <div>
-                  {QUICK_ROUTES.map((route) => (
-                    <button
-                      type="button"
-                      key={route.label}
-                      onClick={() => chooseQuickRoute(route.origin, route.destination)}
-                    >
-                      {route.label}
-                    </button>
-                  ))}
+                  {routeHistory.length ? (
+                    routeHistory.map((route) => {
+                      const label = `${route.origin.name} → ${route.destination.name}`;
+                      return (
+                        <button
+                          type="button"
+                          key={routeHistoryKey(route)}
+                          aria-label={`${route.origin.name}에서 ${route.destination.name} 경로 다시 보기`}
+                          title={label}
+                          onClick={() => commitRoute(route.origin, route.destination)}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <p className="route-history-empty">
+                      이전에 찾은 경로가 여기에 표시돼요.
+                    </p>
+                  )}
                 </div>
               </div>
             </section>

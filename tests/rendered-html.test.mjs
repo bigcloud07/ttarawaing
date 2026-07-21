@@ -33,6 +33,8 @@ test("server-renders the ttarawaing route planner", async () => {
   assert.match(html, /오늘은 따릉이와 함께 어디로 가볼까요/);
   assert.doesNotMatch(html, /어디로 따라갈까요/);
   assert.match(html, /최적 경로 찾기/);
+  assert.match(html, /히스토리/);
+  assert.match(html, /이전에 찾은 경로가 여기에 표시돼요/);
   assert.match(html, /출발 장소를 검색해 주세요/);
   assert.match(html, /도착 장소를 검색해 주세요/);
   assert.match(html, /장소를 선택하면 따릉이 대여·반납 경로가 지도에 표시돼요/);
@@ -46,6 +48,27 @@ test("server-renders the ttarawaing route planner", async () => {
   assert.doesNotMatch(html, /실제 장소 · 예상 경로/);
   assert.doesNotMatch(html, /빈자리 \d+|노들섬 서측 입구/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
+  assert.doesNotMatch(
+    html,
+    /빠른 선택|망원시장 → 더현대|광화문 → 서울숲|홍대 → 여의도/,
+  );
+});
+
+test("stores and reopens recent route history on this device", async () => {
+  const pageSource = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(pageSource, /ROUTE_HISTORY_STORAGE_KEY/);
+  assert.match(pageSource, /window\.localStorage\.getItem/);
+  assert.match(pageSource, /window\.localStorage\.setItem/);
+  assert.match(pageSource, /\.slice\(0, ROUTE_HISTORY_LIMIT\)/);
+  assert.match(
+    pageSource,
+    /onClick=\{\(\) => commitRoute\(route\.origin, route\.destination\)\}/,
+  );
+  assert.doesNotMatch(pageSource, /QUICK_ROUTES|chooseQuickRoute/);
 });
 
 test("draws road geometry instead of manufactured map curves", async () => {

@@ -483,14 +483,14 @@ input:focus-visible {
   right: 16px;
 }
 
-.quick-routes {
+.route-history {
   display: flex;
   align-items: flex-start;
   gap: 9px;
   margin: 16px 0 0 26px;
 }
 
-.quick-routes > span {
+.route-history > span {
   flex: 0 0 auto;
   padding-top: 6px;
   color: #929c97;
@@ -498,14 +498,18 @@ input:focus-visible {
   font-weight: 650;
 }
 
-.quick-routes > div {
+.route-history > div {
   display: flex;
+  min-width: 0;
+  flex: 1;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.quick-routes button {
+.route-history button {
+  max-width: 100%;
   height: 28px;
+  overflow: hidden;
   cursor: pointer;
   padding: 0 9px;
   border: 1px solid #dfe7e2;
@@ -514,12 +518,21 @@ input:focus-visible {
   color: #607069;
   font-size: 10px;
   font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.quick-routes button:hover {
+.route-history button:hover {
   border-color: #9fd8c5;
   background: var(--green-soft);
   color: var(--green-dark);
+}
+
+.route-history-empty {
+  margin: 6px 0 0;
+  color: #9aa39e;
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .result-section {
@@ -1540,12 +1553,12 @@ input:focus-visible {
     padding-left: 17px;
   }
 
-  .quick-routes {
+  .route-history {
     flex-direction: column;
     gap: 5px;
   }
 
-  .quick-routes > span {
+  .route-history > span {
     padding-top: 0;
   }
 
