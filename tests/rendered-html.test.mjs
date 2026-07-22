@@ -389,6 +389,23 @@ test("tracks live location, focuses only on request, and rotates the map for hea
   assert.match(pageSource, /mapLocationMode === "tracking"/);
   assert.match(pageSource, /mapLocationMode === "heading"/);
   assert.match(pageSource, /내가 보는 방향 표시/);
+  assert.match(
+    pageSource,
+    /현재 위치와 방향 추적을 종료하고 지도를 북쪽 기준으로 되돌리기/,
+  );
+  const locateMapUserHandler =
+    pageSource.match(
+      /const locateMapUser = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/,
+    )?.[1] ?? "";
+  assert.match(locateMapUserHandler, /stopMapLocationTracking\(true\)/);
+  assert.match(
+    locateMapUserHandler,
+    /mapLocationMode === "tracking" && mapHeadingStatus === "denied"/,
+  );
+  assert.equal(
+    (locateMapUserHandler.match(/setMapLocationFocusRequestId/g) ?? []).length,
+    1,
+  );
   assert.doesNotMatch(pageSource, /aria-pressed=\{locationMode !== "idle"\}/);
   assert.match(pageSource, /map\.flyTo\(userLocation/);
   assert.doesNotMatch(pageSource, /map\.panTo\(userLocation/);

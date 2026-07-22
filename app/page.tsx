@@ -1056,8 +1056,8 @@ function RouteMapChrome({
   const locationControlLabel =
     locationStatus === "error"
       ? "현재 위치를 확인하지 못했어요. 실시간 추적 다시 시도"
-      : locationMode === "heading"
-        ? "현재 위치와 방향을 추적하고 지도를 진행 방향으로 회전 중. 현재 위치로 다시 이동"
+      : locationMode === "heading" || headingStatus === "denied"
+        ? "현재 위치와 방향 추적을 종료하고 지도를 북쪽 기준으로 되돌리기"
         : locationMode === "tracking"
           ? "내가 보는 방향 표시"
           : "실시간 현재 위치 추적 시작";
@@ -2849,20 +2849,26 @@ export default function Home() {
       startMapLocationTracking();
       return;
     }
+    if (
+      mapLocationMode === "heading" ||
+      (mapLocationMode === "tracking" && mapHeadingStatus === "denied")
+    ) {
+      stopMapLocationTracking(true);
+      return;
+    }
     if (mapLocationMode === "tracking") {
       setMapFocusRequest(null);
       setMapLocationFocusRequestId((requestId) => requestId + 1);
       void enableMapHeading();
       return;
     }
-
-    setMapFocusRequest(null);
-    setMapLocationFocusRequestId((requestId) => requestId + 1);
   }, [
     enableMapHeading,
+    mapHeadingStatus,
     mapLocationMode,
     mapLocationStatus,
     startMapLocationTracking,
+    stopMapLocationTracking,
   ]);
 
   const focusMapCoordinates = useCallback(
