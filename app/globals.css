@@ -1414,9 +1414,30 @@ input:focus-visible {
   inset: 0;
 }
 
+.map-wrap {
+  overflow: hidden;
+}
+
 .map-canvas {
   z-index: 1;
   background: #e9eeea;
+  transform-origin: 50% 50%;
+  transition: transform 160ms linear;
+  will-change: transform;
+}
+
+.map-canvas[data-heading-up="true"] .route-marker {
+  rotate: var(--map-counter-rotation);
+  transform-origin: 0 100%;
+}
+
+.map-canvas[data-heading-up="true"] .route-marker-wrapper::after {
+  rotate: var(--map-counter-rotation);
+  transform-origin: 0 100%;
+}
+
+.map-canvas[data-heading-up="true"] .leaflet-control-container {
+  display: none;
 }
 
 .map-canvas .leaflet-tile-pane {

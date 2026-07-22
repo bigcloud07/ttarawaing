@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { RefObject } from "react";
 import type {
   LayerGroup,
   Map as LeafletMap,
@@ -61,6 +62,11 @@ import {
 } from "./current-location-request";
 import { requestDeviceOrientationPermission } from "./device-orientation-permission";
 import { splitKakaoRoutePoints } from "./kakao-route-groups";
+import {
+  consumeLocationFocusRequest,
+  getRotatingMapCanvasSide,
+  unwrapMapHeading,
+} from "./map-location-camera";
 import stationCatalog from "./data/seoul-bike-stations.json";
 import type {
   KakaoCustomOverlay,
@@ -619,6 +625,93 @@ function updateCurrentLocationHeading(
   }
 }
 
+function useHeadingUpMapCanvas({
+  nodeRef,
+  enabled,
+  heading,
+  ready,
+  onRelayout,
+}: {
+  nodeRef: RefObject<HTMLDivElement | null>;
+  enabled: boolean;
+  heading: number | null;
+  ready: boolean;
+  onRelayout: () => void;
+}) {
+  const continuousHeadingRef = useRef<number | null>(null);
+  const headingUp = enabled && Number.isFinite(heading);
+
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (!node) return;
+
+    if (!headingUp || heading === null) {
+      continuousHeadingRef.current = null;
+      node.removeAttribute("data-heading-up");
+      node.style.removeProperty("--map-counter-rotation");
+      node.style.removeProperty("transform");
+      return;
+    }
+
+    const continuousHeading = unwrapMapHeading(
+      continuousHeadingRef.current,
+      heading,
+    );
+    continuousHeadingRef.current = continuousHeading;
+    node.dataset.headingUp = "true";
+    node.style.setProperty(
+      "--map-counter-rotation",
+      `${continuousHeading}deg`,
+    );
+    node.style.transform = `rotate(${-continuousHeading}deg)`;
+  }, [heading, headingUp, nodeRef]);
+
+  useEffect(() => {
+    const node = nodeRef.current;
+    const viewport = node?.parentElement;
+    if (!ready || !node || !viewport) return;
+
+    let animationFrame = 0;
+    const applyLayout = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        if (headingUp) {
+          const side = getRotatingMapCanvasSide(
+            viewport.clientWidth,
+            viewport.clientHeight,
+          );
+          if (side > 0) {
+            node.style.inset = "auto";
+            node.style.left = "50%";
+            node.style.top = "50%";
+            node.style.width = `${side}px`;
+            node.style.height = `${side}px`;
+            node.style.marginLeft = `${-side / 2}px`;
+            node.style.marginTop = `${-side / 2}px`;
+          }
+        } else {
+          node.style.inset = "0";
+          node.style.removeProperty("left");
+          node.style.removeProperty("top");
+          node.style.removeProperty("width");
+          node.style.removeProperty("height");
+          node.style.removeProperty("margin-left");
+          node.style.removeProperty("margin-top");
+        }
+        onRelayout();
+      });
+    };
+
+    applyLayout();
+    const resizeObserver = new ResizeObserver(applyLayout);
+    resizeObserver.observe(viewport);
+    return () => {
+      resizeObserver.disconnect();
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, [headingUp, nodeRef, onRelayout, ready]);
+}
+
 function getRouteGeometryStatus(geometry: RouteGeometry): RouteGeometryStatus {
   const roadSegmentCount = [
     geometry.walkTo,
@@ -967,7 +1060,7 @@ function RouteMapChrome({
     locationStatus === "error"
       ? "현재 위치를 확인하지 못했어요. 실시간 추적 다시 시도"
       : locationMode === "heading"
-        ? "현재 위치와 방향을 추적 중. 현재 위치로 다시 이동"
+        ? "현재 위치와 방향을 추적하고 지도를 진행 방향으로 회전 중. 현재 위치로 다시 이동"
         : locationMode === "tracking"
           ? "내가 보는 방향 표시"
           : "실시간 현재 위치 추적 시작";
@@ -1065,6 +1158,8 @@ function LeafletRouteMap({
   focusRequest,
   userLocation,
   userHeading,
+  locationFocusRequestId,
+  tryConsumeLocationFocusRequest,
   locationStatus,
   locationMode,
   headingStatus,
@@ -1077,6 +1172,8 @@ function LeafletRouteMap({
   focusRequest: MapFocusRequest | null;
   userLocation: Coordinates | null;
   userHeading: number | null;
+  locationFocusRequestId: number;
+  tryConsumeLocationFocusRequest: (requestId: number) => boolean;
   locationStatus: MapLocationStatus;
   locationMode: MapLocationMode;
   headingStatus: MapHeadingStatus;
@@ -1092,6 +1189,28 @@ function LeafletRouteMap({
   const userHeadingRef = useRef(userHeading);
   const focusRequestRef = useRef<MapFocusRequest | null>(focusRequest);
   const [ready, setReady] = useState(false);
+  const routeCameraKey = [
+    plan.origin.id,
+    plan.startStation.id,
+    ...transferStops.map((station) => station.id),
+    plan.endStation.id,
+    plan.destination.id,
+  ].join("|");
+
+  useEffect(() => {
+    hasLocatedRef.current = false;
+  }, [routeCameraKey]);
+
+  const relayoutMapForHeading = useCallback(() => {
+    mapRef.current?.invalidateSize({ pan: false });
+  }, []);
+  useHeadingUpMapCanvas({
+    nodeRef,
+    enabled: locationMode === "heading",
+    heading: userHeading,
+    ready,
+    onRelayout: relayoutMapForHeading,
+  });
 
   useEffect(() => {
     focusRequestRef.current = focusRequest;
@@ -1146,6 +1265,7 @@ function LeafletRouteMap({
           );
           return;
         }
+        if (hasLocatedRef.current) return;
         const bounds = L.latLngBounds([
           plan.origin.coordinates,
           plan.startStation.coordinates,
@@ -1283,7 +1403,7 @@ function LeafletRouteMap({
           ROUTE_FOCUS_LEAFLET_ZOOM,
           { duration: 0.45 },
         );
-      } else {
+      } else if (!hasLocatedRef.current) {
         mapRef.current.fitBounds(bounds, {
           paddingTopLeft: [80, 110],
           paddingBottomRight: [90, 90],
@@ -1387,18 +1507,25 @@ function LeafletRouteMap({
         userHeadingRef.current,
       );
 
-      if (!hasLocatedRef.current) {
-        map.flyTo(userLocation, Math.max(map.getZoom(), 16), { duration: 0.45 });
-        hasLocatedRef.current = true;
-      } else {
-        map.panTo(userLocation, { animate: true, duration: 0.3 });
-      }
     });
 
     return () => {
       active = false;
     };
   }, [ready, userLocation]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map || !userLocation) return;
+    if (!tryConsumeLocationFocusRequest(locationFocusRequestId)) return;
+    hasLocatedRef.current = true;
+    map.flyTo(userLocation, Math.max(map.getZoom(), 16), { duration: 0.45 });
+  }, [
+    locationFocusRequestId,
+    ready,
+    tryConsumeLocationFocusRequest,
+    userLocation,
+  ]);
 
   useEffect(() => {
     userHeadingRef.current = userHeading;
@@ -1416,6 +1543,7 @@ function LeafletRouteMap({
         locationMode={locationMode}
         headingStatus={headingStatus}
         onLocate={onLocate}
+        showOpenStreetMapAttribution={locationMode === "heading"}
       />
     </div>
   );
@@ -1429,6 +1557,8 @@ function KakaoRouteMap({
   focusRequest,
   userLocation,
   userHeading,
+  locationFocusRequestId,
+  tryConsumeLocationFocusRequest,
   locationStatus,
   locationMode,
   headingStatus,
@@ -1442,6 +1572,8 @@ function KakaoRouteMap({
   focusRequest: MapFocusRequest | null;
   userLocation: Coordinates | null;
   userHeading: number | null;
+  locationFocusRequestId: number;
+  tryConsumeLocationFocusRequest: (requestId: number) => boolean;
   locationStatus: MapLocationStatus;
   locationMode: MapLocationMode;
   headingStatus: MapHeadingStatus;
@@ -1458,6 +1590,28 @@ function KakaoRouteMap({
   const userHeadingRef = useRef(userHeading);
   const focusRequestRef = useRef<MapFocusRequest | null>(focusRequest);
   const [ready, setReady] = useState(false);
+  const routeCameraKey = [
+    plan.origin.id,
+    plan.startStation.id,
+    ...transferStops.map((station) => station.id),
+    plan.endStation.id,
+    plan.destination.id,
+  ].join("|");
+
+  useEffect(() => {
+    hasLocatedRef.current = false;
+  }, [routeCameraKey]);
+
+  const relayoutMapForHeading = useCallback(() => {
+    mapRef.current?.relayout();
+  }, []);
+  useHeadingUpMapCanvas({
+    nodeRef,
+    enabled: locationMode === "heading",
+    heading: userHeading,
+    ready,
+    onRelayout: relayoutMapForHeading,
+  });
 
   useEffect(() => {
     focusRequestRef.current = focusRequest;
@@ -1553,7 +1707,7 @@ function KakaoRouteMap({
           const position = toLatLng(requestedFocus.coordinates);
           map.setLevel(ROUTE_FOCUS_KAKAO_LEVEL);
           map.panTo(position);
-        } else {
+        } else if (!hasLocatedRef.current) {
           map.setBounds(bounds, 110, 90, 90, 80);
         }
       });
@@ -1693,7 +1847,7 @@ function KakaoRouteMap({
         const position = toLatLng(requestedFocus.coordinates);
         map.setLevel(ROUTE_FOCUS_KAKAO_LEVEL);
         map.panTo(position);
-      } else {
+      } else if (!hasLocatedRef.current) {
         map.setBounds(bounds, 110, 90, 90, 80);
       }
     });
@@ -1751,12 +1905,23 @@ function KakaoRouteMap({
       userHeadingRef.current,
     );
 
-    if (!hasLocatedRef.current) {
-      map.setLevel(4);
-      hasLocatedRef.current = true;
-    }
-    map.panTo(position);
   }, [ready, userLocation]);
+
+  useEffect(() => {
+    const sdk = sdkRef.current;
+    const map = mapRef.current;
+    if (!ready || !sdk || !map || !userLocation) return;
+    if (!tryConsumeLocationFocusRequest(locationFocusRequestId)) return;
+    hasLocatedRef.current = true;
+    const position = new sdk.maps.LatLng(userLocation[0], userLocation[1]);
+    map.setLevel(4);
+    map.panTo(position);
+  }, [
+    locationFocusRequestId,
+    ready,
+    tryConsumeLocationFocusRequest,
+    userLocation,
+  ]);
 
   useEffect(() => {
     userHeadingRef.current = userHeading;
@@ -1792,6 +1957,8 @@ function RouteMap({
   focusRequest,
   userLocation,
   userHeading,
+  locationFocusRequestId,
+  tryConsumeLocationFocusRequest,
   locationStatus,
   locationMode,
   headingStatus,
@@ -1804,6 +1971,8 @@ function RouteMap({
   focusRequest: MapFocusRequest | null;
   userLocation: Coordinates | null;
   userHeading: number | null;
+  locationFocusRequestId: number;
+  tryConsumeLocationFocusRequest: (requestId: number) => boolean;
   locationStatus: MapLocationStatus;
   locationMode: MapLocationMode;
   headingStatus: MapHeadingStatus;
@@ -1836,6 +2005,8 @@ function RouteMap({
         focusRequest={focusRequest}
         userLocation={userLocation}
         userHeading={userHeading}
+        locationFocusRequestId={locationFocusRequestId}
+        tryConsumeLocationFocusRequest={tryConsumeLocationFocusRequest}
         locationStatus={locationStatus}
         locationMode={locationMode}
         headingStatus={headingStatus}
@@ -1854,6 +2025,8 @@ function RouteMap({
         focusRequest={focusRequest}
         userLocation={userLocation}
         userHeading={userHeading}
+        locationFocusRequestId={locationFocusRequestId}
+        tryConsumeLocationFocusRequest={tryConsumeLocationFocusRequest}
         locationStatus={locationStatus}
         locationMode={locationMode}
         headingStatus={headingStatus}
@@ -1905,6 +2078,8 @@ export default function Home() {
     useState<MapLocationStatus>("idle");
   const [mapLocationMode, setMapLocationMode] =
     useState<MapLocationMode>("idle");
+  const [mapLocationFocusRequestId, setMapLocationFocusRequestId] = useState(0);
+  const mapHandledLocationFocusRequestIdRef = useRef(0);
   const [mapHeadingStatus, setMapHeadingStatus] =
     useState<MapHeadingStatus>("idle");
   const [mapDeviceHeading, setMapDeviceHeading] = useState<number | null>(null);
@@ -2214,6 +2389,7 @@ export default function Home() {
 
   const startMapLocationTracking = useCallback(() => {
     setMapFocusRequest(null);
+    setMapLocationFocusRequestId((requestId) => requestId + 1);
     if (!navigator.geolocation) {
       setMapLocationMode("idle");
       setMapLocationStatus("error");
@@ -2281,6 +2457,21 @@ export default function Home() {
       mapHasLocationFixRef.current = false;
     }
   }, [teardownMapOrientation]);
+
+  const tryConsumeMapLocationFocusRequest = useCallback(
+    (requestId: number) => {
+      const focusDecision = consumeLocationFocusRequest(
+        requestId,
+        mapHandledLocationFocusRequestIdRef.current,
+        true,
+      );
+      if (!focusDecision.shouldFocus) return false;
+      mapHandledLocationFocusRequestIdRef.current =
+        focusDecision.nextHandledRequestId;
+      return true;
+    },
+    [],
+  );
 
   const enableMapHeading = useCallback(async () => {
     const requestId = mapLocationRequestIdRef.current;
@@ -2372,16 +2563,14 @@ export default function Home() {
       return;
     }
     if (mapLocationMode === "tracking") {
+      setMapFocusRequest(null);
+      setMapLocationFocusRequestId((requestId) => requestId + 1);
       void enableMapHeading();
       return;
     }
 
     setMapFocusRequest(null);
-    setMapUserLocation((currentLocation) =>
-      currentLocation
-        ? [currentLocation[0], currentLocation[1]]
-        : currentLocation,
-    );
+    setMapLocationFocusRequestId((requestId) => requestId + 1);
   }, [
     enableMapHeading,
     mapLocationMode,
@@ -3046,6 +3235,10 @@ export default function Home() {
               focusRequest={mapFocusRequest}
               userLocation={mapUserLocation}
               userHeading={mapUserHeading}
+              locationFocusRequestId={mapLocationFocusRequestId}
+              tryConsumeLocationFocusRequest={
+                tryConsumeMapLocationFocusRequest
+              }
               locationStatus={mapLocationStatus}
               locationMode={mapLocationMode}
               headingStatus={mapHeadingStatus}

@@ -287,11 +287,12 @@ test("shows a centered spinner instead of temporary dotted route geometry", asyn
   assert.match(routeLoadingRule, /pointer-events:\s*none/);
 });
 
-test("tracks live location, then enables heading from the lower-right map control", async () => {
-  const [pageSource, styles, kakaoSource] = await Promise.all([
+test("tracks live location, focuses only on request, and rotates the map for heading", async () => {
+  const [pageSource, styles, kakaoSource, cameraSource] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/map-location-camera.ts", import.meta.url), "utf8"),
   ]);
   const guideControlsRule =
     styles.match(/\.map-guide-controls\s*\{([^}]+)\}/)?.[1] ?? "";
@@ -320,8 +321,14 @@ test("tracks live location, then enables heading from the lower-right map contro
   assert.match(pageSource, /내가 보는 방향 표시/);
   assert.doesNotMatch(pageSource, /aria-pressed=\{locationMode !== "idle"\}/);
   assert.match(pageSource, /map\.flyTo\(userLocation/);
-  assert.match(pageSource, /map\.panTo\(userLocation/);
+  assert.doesNotMatch(pageSource, /map\.panTo\(userLocation/);
   assert.match(pageSource, /map\.panTo\(position\)/);
+  assert.match(pageSource, /consumeLocationFocusRequest/);
+  assert.match(pageSource, /setMapLocationFocusRequestId/);
+  assert.match(pageSource, /locationFocusRequestId/);
+  assert.match(pageSource, /mapHandledLocationFocusRequestIdRef/);
+  assert.doesNotMatch(pageSource, /lastHandledLocationFocusRequestRef/);
+  assert.match(pageSource, /routeCameraKey/);
   assert.match(pageSource, /marker\.setLatLng\(userLocation\)/);
   assert.match(pageSource, /overlay\.setPosition\(position\)/);
   assert.match(pageSource, /current-location-marker/);
@@ -338,6 +345,10 @@ test("tracks live location, then enables heading from the lower-right map contro
   assert.match(styles, /\.current-location-direction\s*\{/);
   assert.match(styles, /rotate\(var\(--location-heading\)\)/);
   assert.match(styles, /\.current-location-marker\.has-heading/);
+  assert.match(styles, /\.map-canvas\[data-heading-up="true"\]/);
+  assert.match(pageSource, /node\.style\.transform = `rotate\(\$\{-continuousHeading\}deg\)`/);
+  assert.match(pageSource, /getRotatingMapCanvasSide/);
+  assert.match(cameraSource, /Math\.ceil\(Math\.hypot\(width, height\)\)/);
 });
 
 test("fills the desktop map to the top beside the left-only header", async () => {
