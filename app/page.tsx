@@ -743,9 +743,11 @@ function useRouteRecommendation(
       basePlan
         ? {
             origin: basePlan.origin.coordinates,
+            originAddress: basePlan.origin.address,
             startStation: basePlan.startStation.coordinates,
             endStation: basePlan.endStation.coordinates,
             destination: basePlan.destination.coordinates,
+            destinationAddress: basePlan.destination.address,
           }
         : null,
     [basePlan],

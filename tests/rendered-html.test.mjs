@@ -267,7 +267,11 @@ test("draws road geometry instead of manufactured map curves", async () => {
   assert.match(routeSource, /routed-foot/);
   assert.match(routeSource, /routed-bike/);
   assert.match(routeSource, /REQUEST_INTERVAL_MS = 1_100/);
-  assert.match(routeSource, /routeRatio > 4/);
+  assert.match(routeSource, /nearest\/v1\/driving/);
+  assert.match(routeSource, /table\/v1\/driving/);
+  assert.match(routeSource, /isSuspiciousFootDetour/);
+  assert.match(routeSource, /extractFootAccessRoadName/);
+  assert.match(pageSource, /originAddress: basePlan\.origin\.address/);
 });
 
 test("shows a centered spinner instead of temporary dotted route geometry", async () => {
