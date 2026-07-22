@@ -16,6 +16,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import {
   Fragment,
   useCallback,
@@ -24,7 +25,11 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  RefObject,
+} from "react";
 import type {
   LayerGroup,
   Map as LeafletMap,
@@ -2897,7 +2902,7 @@ export default function Home() {
     focusMapCoordinates(nextRouteLeg.target.coordinates, true);
   }, [focusMapCoordinates, nextRouteLeg]);
 
-  const resetRoute = () => {
+  const resetRoute = (focusOrigin = true) => {
     originLocationRequestGateRef.current.invalidate();
     pendingResultFocusRef.current = false;
     setMobileDetailsMinimized(false);
@@ -2914,7 +2919,28 @@ export default function Home() {
     setRouteDetailsOpen(true);
     setErrorMessage("");
     showNotice("");
-    window.requestAnimationFrame(() => document.getElementById("origin")?.focus());
+    if (focusOrigin) {
+      window.requestAnimationFrame(() =>
+        document.getElementById("origin")?.focus(),
+      );
+    }
+  };
+
+  const returnToHome = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    resetRoute(false);
+    window.history.replaceState(null, "", "/");
+    window.scrollTo({ top: 0, behavior: "auto" });
   };
 
   const mapUserHeading =
@@ -2931,7 +2957,12 @@ export default function Home() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="따라와잉 홈">
+        <Link
+          className="brand"
+          href="/"
+          aria-label="따라와잉 홈으로 돌아가기"
+          onClick={returnToHome}
+        >
           <span className="brand-mark">
             <Bike size={23} strokeWidth={2.4} aria-hidden="true" />
           </span>
@@ -2939,7 +2970,7 @@ export default function Home() {
             <strong>따라와잉</strong>
             <small>따릉이로 잇는 서울</small>
           </span>
-        </a>
+        </Link>
       </header>
 
       <div
@@ -3083,7 +3114,11 @@ export default function Home() {
               </button>
 
               {plan ? (
-                <button className="reset-route-button" type="button" onClick={resetRoute}>
+                <button
+                  className="reset-route-button"
+                  type="button"
+                  onClick={() => resetRoute()}
+                >
                   다시 입력하기
                 </button>
               ) : null}

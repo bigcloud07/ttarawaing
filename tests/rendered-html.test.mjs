@@ -275,17 +275,24 @@ test("shows transfer stops consistently in the timeline and maps", async () => {
   assert.match(styles, /\.transfer-station \.station-number/);
 });
 
-test("clears the active route from a dedicated re-entry button", async () => {
-  const pageSource = await readFile(
-    new URL("../app/page.tsx", import.meta.url),
-    "utf8",
-  );
+test("clears the active route from the re-entry button and top brand", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
 
   assert.match(pageSource, /className="reset-route-button"/);
   assert.match(pageSource, /다시 입력하기/);
-  assert.match(pageSource, /const resetRoute = \(\) =>/);
+  assert.match(pageSource, /const resetRoute = \(focusOrigin = true\) =>/);
   assert.match(pageSource, /setCommittedRoute\(null\)/);
   assert.match(pageSource, /document\.getElementById\("origin"\)\?\.focus\(\)/);
+  assert.match(pageSource, /const returnToHome =/);
+  assert.match(pageSource, /resetRoute\(false\)/);
+  assert.match(pageSource, /window\.history\.replaceState\(null, "", "\/"\)/);
+  assert.match(pageSource, /className="brand"[\s\S]*?href="\/"/);
+  assert.match(pageSource, /aria-label="따라와잉 홈으로 돌아가기"/);
+  assert.match(pageSource, /onClick=\{returnToHome\}/);
+  assert.match(styles, /\.brand \{[\s\S]*?width: 100%;[\s\S]*?height: 100%;/);
   assert.doesNotMatch(pageSource, /clearInstanceListeners/);
   assert.doesNotMatch(pageSource, /replaceChildren\(\)/);
 });
