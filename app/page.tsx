@@ -68,6 +68,7 @@ import { requestDeviceOrientationPermission } from "./device-orientation-permiss
 import {
   consumeLocationFocusRequest,
   getRotatingMapCanvasSide,
+  relayoutPreservingMapCenter,
   unwrapMapHeading,
 } from "./map-location-camera";
 import {
@@ -1217,7 +1218,7 @@ function LeafletRouteMap({
   }, [routeCameraKey]);
 
   const relayoutMapForHeading = useCallback(() => {
-    mapRef.current?.invalidateSize({ pan: false });
+    mapRef.current?.invalidateSize({ pan: true, animate: false });
   }, []);
   useHeadingUpMapCanvas({
     nodeRef,
@@ -1634,7 +1635,9 @@ function KakaoRouteMap({
   }, [routeCameraKey]);
 
   const relayoutMapForHeading = useCallback(() => {
-    mapRef.current?.relayout();
+    const map = mapRef.current;
+    if (!map) return;
+    relayoutPreservingMapCenter(map);
   }, []);
   useHeadingUpMapCanvas({
     nodeRef,

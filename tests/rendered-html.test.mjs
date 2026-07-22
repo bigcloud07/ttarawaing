@@ -692,8 +692,35 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.match(gripRule, /background:\s*#b9c3bd/);
   assert.doesNotMatch(gripRule, /transition:|transform:|var\(--green\)/);
   assert.match(pageSource, /new ResizeObserver\(applyLayout\)/);
-  assert.match(pageSource, /mapRef\.current\?\.invalidateSize\(\{ pan: false \}\)/);
-  assert.match(pageSource, /mapRef\.current\?\.relayout\(\)/);
+});
+
+test("keeps the mobile heading-up camera centered through map relayout", async () => {
+  const [pageSource, kakaoSource, cameraSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/map-location-camera.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const mapCanvasRule =
+    styles.match(/\.map-canvas\s*\{(\s*z-index:[^}]+)\}/)?.[1] ?? "";
+
+  assert.match(
+    pageSource,
+    /invalidateSize\(\{ pan: true, animate: false \}\)/,
+  );
+  assert.doesNotMatch(pageSource, /invalidateSize\(\{ pan: false/);
+  assert.match(pageSource, /relayoutPreservingMapCenter\(map\)/);
+  assert.match(kakaoSource, /getCenter\(\): KakaoLatLng/);
+  assert.match(kakaoSource, /setCenter\(position: KakaoLatLng\): void/);
+  assert.match(
+    cameraSource,
+    /const center = map\.getCenter\(\);[\s\S]*map\.relayout\(\);[\s\S]*map\.setCenter\(center\);/,
+  );
+  assert.match(pageSource, /node\.style\.left = "50%"/);
+  assert.match(pageSource, /node\.style\.top = "50%"/);
+  assert.match(pageSource, /node\.style\.marginLeft = `\$\{-side \/ 2\}px`/);
+  assert.match(pageSource, /node\.style\.marginTop = `\$\{-side \/ 2\}px`/);
+  assert.match(mapCanvasRule, /transform-origin:\s*50% 50%/);
 });
 
 test("summarizes route time as icon and duration in travel order", async () => {

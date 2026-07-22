@@ -3,6 +3,12 @@ export type LocationFocusDecision = {
   nextHandledRequestId: number;
 };
 
+type CenterPreservingMap<TCenter> = {
+  getCenter(): TCenter;
+  relayout(): void;
+  setCenter(center: TCenter): void;
+};
+
 export function consumeLocationFocusRequest(
   requestId: number,
   lastHandledRequestId: number,
@@ -53,4 +59,12 @@ export function getRotatingMapCanvasSide(width: number, height: number) {
     return 0;
   }
   return Math.ceil(Math.hypot(width, height));
+}
+
+export function relayoutPreservingMapCenter<TCenter>(
+  map: CenterPreservingMap<TCenter>,
+) {
+  const center = map.getCenter();
+  map.relayout();
+  map.setCenter(center);
 }

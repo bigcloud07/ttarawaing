@@ -18,6 +18,8 @@ export type KakaoLatLngBounds = {
 };
 
 export type KakaoMap = {
+  getCenter(): KakaoLatLng;
+  setCenter(position: KakaoLatLng): void;
   setBounds(
     bounds: KakaoLatLngBounds,
     paddingTop?: number,
