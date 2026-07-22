@@ -2039,8 +2039,7 @@ input:focus-visible {
   }
 
   .route-form {
-    margin-right: 13px;
-    margin-left: -13px;
+    margin-inline: 0;
   }
 
   .pass-selector,

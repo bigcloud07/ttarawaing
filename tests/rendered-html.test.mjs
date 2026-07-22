@@ -439,7 +439,7 @@ test("fills the desktop map to the top beside the left-only header", async () =>
   assert.match(mapPanelRule, /height:\s*100vh/);
 });
 
-test("centers the mobile route form and hides only the empty mobile map", async () => {
+test("centers the mobile rail and place fields as one route form and hides only the empty mobile map", async () => {
   const styles = await readFile(
     new URL("../app/globals.css", import.meta.url),
     "utf8",
@@ -450,7 +450,11 @@ test("centers the mobile route form and hides only the empty mobile map", async 
   assert.match(desktopEmptyMapRule, /display:\s*grid/);
   assert.match(
     styles,
-    /@media \(max-width: 900px\)[\s\S]*?\.route-form\s*\{[^}]*margin-right:\s*13px[^}]*margin-left:\s*-13px/s,
+    /@media \(max-width: 900px\)[\s\S]*?\.route-form\s*\{[^}]*margin-inline:\s*0/s,
+  );
+  assert.doesNotMatch(
+    styles,
+    /@media \(max-width: 900px\)[\s\S]*?\.route-form\s*\{[^}]*margin-left:\s*-13px/s,
   );
   assert.match(
     styles,
