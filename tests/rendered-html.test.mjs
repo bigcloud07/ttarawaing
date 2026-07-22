@@ -553,7 +553,60 @@ test("scrolls and focuses the recommendation after the primary route search", as
     styles,
     /\.result-section\s*\{[^}]*scroll-margin-block-start:\s*12px/s,
   );
-  assert.match(styles, /scroll-margin-block-start:\s*76px/);
+  assert.match(styles, /scroll-margin-block-start:\s*120px/);
+  assert.match(styles, /scroll-margin-block-start:\s*116px/);
+});
+
+test("provides a draggable mobile route-details sheet that enlarges the map", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(pageSource, /mobileDetailsMinimized/);
+  assert.match(pageSource, /is-mobile-details-minimized/);
+  assert.match(pageSource, /aria-controls="route-details-content"/);
+  assert.match(pageSource, /aria-expanded=\{!mobileDetailsMinimized\}/);
+  assert.match(pageSource, /className="panel-scroll" id="route-details-content"/);
+  assert.match(
+    pageSource,
+    /className="mobile-details-toggle"[\s\S]*?className="panel-scroll" id="route-details-content"/,
+  );
+  assert.match(pageSource, /경로 상세 정보 최소화/);
+  assert.match(pageSource, /경로 상세 정보 펼치기/);
+  assert.match(pageSource, /onClick=\{toggleMobileDetails\}/);
+  assert.match(pageSource, /onPointerDown=\{startMobileDetailsDrag\}/);
+  assert.match(pageSource, /onPointerUp=\{finishMobileDetailsDrag\}/);
+  assert.match(pageSource, /onPointerCancel=\{cancelMobileDetailsDrag\}/);
+  assert.match(pageSource, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(pageSource, /releasePointerCapture\(event\.pointerId\)/);
+  assert.match(pageSource, /mobileDetailsIgnoreClickUntilRef\.current/);
+  assert.match(
+    pageSource,
+    /Date\.now\(\) \+ MOBILE_ROUTE_SHEET_CLICK_SUPPRESSION_MS/,
+  );
+  assert.match(pageSource, /shouldSuppressMobileRouteSheetClick\(start, end\)/);
+  assert.match(pageSource, /scrollToMobileMap\(\)/);
+  assert.match(pageSource, /setMobileDetailsMinimized\(false\)/);
+  assert.match(pageSource, /pendingResultFocusRef\.current = false/);
+  assert.match(styles, /\.mobile-details-toggle\s*\{\s*display:\s*none/);
+  assert.match(
+    styles,
+    /@media \(max-width: 900px\)[\s\S]*?\.mobile-details-toggle\s*\{[^}]*display:\s*flex[^}]*height:\s*44px[^}]*touch-action:\s*none/s,
+  );
+  assert.match(
+    styles,
+    /\.workspace\.has-route\.is-mobile-details-minimized \.route-panel\s*\{[^}]*height:\s*44px[^}]*flex:\s*0 0 44px[^}]*overflow:\s*hidden/s,
+  );
+  assert.match(
+    styles,
+    /\.workspace\.has-route\.is-mobile-details-minimized \.panel-scroll\s*\{[^}]*display:\s*none/s,
+  );
+  assert.match(
+    styles,
+    /\.workspace\.has-route\.is-mobile-details-minimized \.map-panel\s*\{[^}]*height:\s*calc\(100dvh - 64px - 44px\)[^}]*min-height:\s*0/s,
+  );
+  assert.match(styles, /height:\s*calc\(100dvh - 60px - 44px\)/);
 });
 
 test("summarizes route time as icon and duration in travel order", async () => {

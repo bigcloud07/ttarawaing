@@ -26,7 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { RefObject } from "react";
+import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import type {
   LayerGroup,
   Map as LeafletMap,
@@ -67,6 +67,11 @@ import {
   getRotatingMapCanvasSide,
   unwrapMapHeading,
 } from "./map-location-camera";
+import {
+  MOBILE_ROUTE_SHEET_CLICK_SUPPRESSION_MS,
+  getMobileRouteSheetDragAction,
+  shouldSuppressMobileRouteSheetClick,
+} from "./mobile-route-sheet";
 import stationCatalog from "./data/seoul-bike-stations.json";
 import type {
   KakaoCustomOverlay,
@@ -2098,6 +2103,13 @@ export default function Home() {
   const resultSectionRef = useRef<HTMLElement>(null);
   const pendingResultFocusRef = useRef(false);
   const [resultFocusRequestId, setResultFocusRequestId] = useState(0);
+  const [mobileDetailsMinimized, setMobileDetailsMinimized] = useState(false);
+  const mobileDetailsDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const mobileDetailsIgnoreClickUntilRef = useRef(0);
   const [stations, setStations] = useState(STATIONS);
   const [liveBikeStatus, setLiveBikeStatus] = useState<
     "loading" | "ready" | "unavailable"
@@ -2283,6 +2295,7 @@ export default function Home() {
       rememberRoute({ origin: resolvedOrigin, destination: resolvedDestination });
       setSelectedEndStationId(undefined);
       setAlternativesOpen(false);
+      setMobileDetailsMinimized(false);
       setErrorMessage("");
       originLocationRequestGateRef.current.invalidate();
       return true;
@@ -2315,6 +2328,83 @@ export default function Home() {
 
     return () => window.cancelAnimationFrame(frameId);
   }, [plan, resultFocusRequestId]);
+
+  const scrollToMobileMap = useCallback(() => {
+    if (!window.matchMedia("(max-width: 900px)").matches) return;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    window.requestAnimationFrame(() => {
+      mapPanelRef.current?.scrollIntoView({
+        behavior: reduceMotion ? "auto" : "smooth",
+        block: "start",
+        inline: "nearest",
+      });
+    });
+  }, []);
+
+  const toggleMobileDetails = useCallback(() => {
+    if (Date.now() < mobileDetailsIgnoreClickUntilRef.current) {
+      mobileDetailsIgnoreClickUntilRef.current = 0;
+      return;
+    }
+    const shouldMinimize = !mobileDetailsMinimized;
+    if (shouldMinimize) {
+      pendingResultFocusRef.current = false;
+      scrollToMobileMap();
+    }
+    setMobileDetailsMinimized(shouldMinimize);
+  }, [mobileDetailsMinimized, scrollToMobileMap]);
+
+  const startMobileDetailsDrag = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      mobileDetailsDragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [],
+  );
+
+  const finishMobileDetailsDrag = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = mobileDetailsDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      mobileDetailsDragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      const start = { x: drag.startX, y: drag.startY };
+      const end = { x: event.clientX, y: event.clientY };
+      if (shouldSuppressMobileRouteSheetClick(start, end)) {
+        mobileDetailsIgnoreClickUntilRef.current =
+          Date.now() + MOBILE_ROUTE_SHEET_CLICK_SUPPRESSION_MS;
+      }
+      const action = getMobileRouteSheetDragAction(start, end);
+      if (!action) return;
+      const shouldMinimize = action === "minimize";
+      if (shouldMinimize) {
+        pendingResultFocusRef.current = false;
+        scrollToMobileMap();
+      }
+      setMobileDetailsMinimized(shouldMinimize);
+    },
+    [scrollToMobileMap],
+  );
+
+  const cancelMobileDetailsDrag = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (mobileDetailsDragRef.current?.pointerId !== event.pointerId) return;
+      mobileDetailsDragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [],
+  );
 
   const selectOrigin = (place: Place) => {
     originLocationRequestGateRef.current.invalidate();
@@ -2639,6 +2729,7 @@ export default function Home() {
   const resetRoute = () => {
     originLocationRequestGateRef.current.invalidate();
     pendingResultFocusRef.current = false;
+    setMobileDetailsMinimized(false);
     stopMapLocationTracking(true);
     setOriginQuery("");
     setDestinationQuery("");
@@ -2679,9 +2770,38 @@ export default function Home() {
         </a>
       </header>
 
-      <div className="workspace" id="top">
+      <div
+        className={`workspace${plan ? " has-route" : ""}${
+          plan && mobileDetailsMinimized ? " is-mobile-details-minimized" : ""
+        }`}
+        id="top"
+      >
         <aside className="route-panel">
-          <div className="panel-scroll">
+          {plan ? (
+            <button
+              className="mobile-details-toggle"
+              type="button"
+              aria-label={
+                mobileDetailsMinimized
+                  ? "경로 상세 정보 펼치기"
+                  : "경로 상세 정보 최소화"
+              }
+              aria-expanded={!mobileDetailsMinimized}
+              aria-controls="route-details-content"
+              title={
+                mobileDetailsMinimized
+                  ? "경로 상세 정보 펼치기"
+                  : "경로 상세 정보 최소화"
+              }
+              onClick={toggleMobileDetails}
+              onPointerDown={startMobileDetailsDrag}
+              onPointerUp={finishMobileDetailsDrag}
+              onPointerCancel={cancelMobileDetailsDrag}
+            >
+              <span className="mobile-details-grip" aria-hidden="true" />
+            </button>
+          ) : null}
+          <div className="panel-scroll" id="route-details-content">
             <section className="search-section" aria-labelledby="route-search-title">
               <div className="section-kicker">
                 대여부터 반납까지 한 번에 알려드려요

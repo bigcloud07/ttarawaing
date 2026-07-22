@@ -137,6 +137,10 @@ input:focus-visible {
   scrollbar-width: thin;
 }
 
+.mobile-details-toggle {
+  display: none;
+}
+
 .search-section {
   padding: 30px 30px 26px;
   border-bottom: 8px solid #f2f5f3;
@@ -2005,6 +2009,8 @@ input:focus-visible {
   .workspace {
     display: flex;
     min-height: calc(100vh - 64px);
+    min-height: calc(100svh - 64px);
+    min-height: calc(100dvh - 64px);
     flex-direction: column;
   }
 
@@ -2020,6 +2026,68 @@ input:focus-visible {
     overflow: visible;
   }
 
+  .mobile-details-toggle {
+    position: sticky;
+    z-index: 520;
+    top: 64px;
+    display: flex;
+    width: 100%;
+    height: 44px;
+    min-height: 44px;
+    cursor: ns-resize;
+    touch-action: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-top: 1px solid #e2e8e4;
+    border-bottom: 1px solid #e7ece9;
+    background: rgba(247, 249, 248, 0.97);
+    box-shadow: 0 -5px 18px rgba(26, 53, 42, 0.08);
+    backdrop-filter: blur(12px);
+  }
+
+  .mobile-details-grip {
+    width: 42px;
+    height: 5px;
+    border-radius: 999px;
+    background: #b9c3bd;
+    transition: width 180ms ease, background 180ms ease, transform 180ms ease;
+  }
+
+  .mobile-details-toggle:hover .mobile-details-grip,
+  .mobile-details-toggle:focus-visible .mobile-details-grip {
+    width: 50px;
+    background: #87978f;
+  }
+
+  .mobile-details-toggle:active .mobile-details-grip {
+    background: var(--green);
+    transform: scaleX(1.08);
+  }
+
+  .workspace.has-route .map-panel {
+    scroll-margin-block-start: 64px;
+    transition: height 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .workspace.has-route.is-mobile-details-minimized .route-panel {
+    height: 44px;
+    flex: 0 0 44px;
+    overflow: hidden;
+  }
+
+  .workspace.has-route.is-mobile-details-minimized .panel-scroll {
+    display: none;
+  }
+
+  .workspace.has-route.is-mobile-details-minimized .map-panel {
+    height: calc(100vh - 64px - 44px);
+    height: calc(100svh - 64px - 44px);
+    height: calc(100dvh - 64px - 44px);
+    min-height: 0;
+  }
+
   .search-section {
     padding: 25px 20px 24px;
     border-bottom-width: 6px;
@@ -2027,7 +2095,7 @@ input:focus-visible {
 
   .result-section {
     padding: 24px 20px 34px;
-    scroll-margin-block-start: 76px;
+    scroll-margin-block-start: 120px;
   }
 
   .map-panel {
@@ -2074,6 +2142,20 @@ input:focus-visible {
     min-height: 300px;
   }
 
+  .mobile-details-toggle {
+    top: 60px;
+  }
+
+  .workspace.has-route .map-panel {
+    scroll-margin-block-start: 60px;
+  }
+
+  .workspace.has-route.is-mobile-details-minimized .map-panel {
+    height: calc(100vh - 60px - 44px);
+    height: calc(100svh - 60px - 44px);
+    height: calc(100dvh - 60px - 44px);
+  }
+
   .title-row h1 {
     font-size: 25px;
   }
@@ -2082,6 +2164,10 @@ input:focus-visible {
   .result-section {
     padding-right: 17px;
     padding-left: 17px;
+  }
+
+  .result-section {
+    scroll-margin-block-start: 116px;
   }
 
   .mode-labels span {
