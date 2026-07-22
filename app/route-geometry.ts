@@ -83,6 +83,8 @@ type ParsedKakaoRoute = {
 };
 
 const ROUTE_API_URL = "/api/routes";
+const ROUTE_PROFILE_HEADER = "X-Ttarawaing-Route-Profile";
+const BIKE_ROUTE_MODE_HEADER = "X-Ttarawaing-Bike-Route-Mode";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_DIRECT_DISTANCE_METERS = 100_000;
 const MAX_GEOMETRY_POINTS = 20_000;
@@ -429,6 +431,15 @@ async function requestKakaoRoute(
     });
     if (!response.ok) {
       throw new Error(`Kakao route proxy returned ${response.status}.`);
+    }
+    if (response.headers.get(ROUTE_PROFILE_HEADER) !== profile) {
+      throw new Error("Kakao route proxy returned a mismatched route profile.");
+    }
+    if (
+      profile === "bike" &&
+      response.headers.get(BIKE_ROUTE_MODE_HEADER) !== bikeRouteMode
+    ) {
+      throw new Error("Kakao route proxy returned a mismatched bicycle mode.");
     }
     const payload = (await response.json()) as unknown;
     throwIfAborted(signal);

@@ -27,6 +27,8 @@ const BIKE_SEOUL_REALTIME_TIMEOUT_MS = 10_000;
 const KAKAO_ROUTE_ORIGIN = "https://dapi.kakao.com";
 const KAKAO_ROUTE_TIMEOUT_MS = 10_000;
 const KAKAO_ROUTE_MAX_WAYPOINTS = 5;
+const ROUTE_PROFILE_HEADER = "X-Ttarawaing-Route-Profile";
+const BIKE_ROUTE_MODE_HEADER = "X-Ttarawaing-Bike-Route-Mode";
 const KAKAO_ROUTE_REQUEST_FIELDS = new Set([
   "mode",
   "coordinates",
@@ -337,6 +339,10 @@ async function handleKakaoRouteRequest(
       headers: {
         ...ROUTE_RESPONSE_HEADERS,
         "Content-Type": "application/json; charset=UTF-8",
+        [ROUTE_PROFILE_HEADER]: parsed.request.mode,
+        ...(parsed.request.mode === "bike"
+          ? { [BIKE_ROUTE_MODE_HEADER]: parsed.request.bikeRouteMode }
+          : {}),
       },
     });
   } catch (error) {

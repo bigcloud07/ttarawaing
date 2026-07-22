@@ -3085,7 +3085,9 @@ export default function Home() {
               >
                 <span className="bike-road-preference-copy">
                   <strong>자전거도로 우선</strong>
-                  <small>가능한 구간에서 자전거도로를 우선한 경로를 찾아요.</small>
+                  <small>
+                    출발·반납 대여소 사이에서 자전거도로를 우선한 경로를 찾아요.
+                  </small>
                 </span>
                 <span className="bike-road-switch" aria-hidden="true">
                   <span />

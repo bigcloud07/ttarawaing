@@ -23,7 +23,7 @@ function parseRouteRequest(init = {}) {
   return JSON.parse(String(init.body));
 }
 
-function successfulRouteResponse(init = {}) {
+function successfulRouteResponse(init = {}, headerOverrides = {}) {
   const request = parseRouteRequest(init);
   const coordinates = request.coordinates;
   const legs = coordinates.slice(0, -1).map((from, index) => {
@@ -48,17 +48,28 @@ function successfulRouteResponse(init = {}) {
       ],
     };
   });
-  return Response.json({
-    status: "OK",
-    route: {
-      properties: {
-        totalDistance: legs.length * 180,
-        totalTime: legs.length * 90,
-        landingUrl: "https://map.kakao.com/",
+  return Response.json(
+    {
+      status: "OK",
+      route: {
+        properties: {
+          totalDistance: legs.length * 180,
+          totalTime: legs.length * 90,
+          landingUrl: "https://map.kakao.com/",
+        },
+        legs,
       },
-      legs,
     },
-  });
+    {
+      headers: {
+        "X-Ttarawaing-Route-Profile": request.mode,
+        ...(request.mode === "bike"
+          ? { "X-Ttarawaing-Bike-Route-Mode": request.bikeRouteMode ?? "SHORTEST" }
+          : {}),
+        ...headerOverrides,
+      },
+    },
+  );
 }
 
 function failedRouteResponse() {
@@ -67,6 +78,28 @@ function failedRouteResponse() {
     { status: 503 },
   );
 }
+
+test("never renders a bicycle response whose route profile does not match", async (t) => {
+  const { loadRouteGeometry } = await importFreshRouteGeometry();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const request = parseRouteRequest(init);
+    return request.mode === "bike"
+      ? successfulRouteResponse(init, {
+          "X-Ttarawaing-Route-Profile": "walk",
+        })
+      : successfulRouteResponse(init);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const geometry = await loadRouteGeometry(routeInput(0.07));
+
+  assert.equal(geometry.walkTo.source, "kakao");
+  assert.equal(geometry.bike.source, "direct");
+  assert.equal(geometry.walkFrom.source, "kakao");
+});
 
 test("a failed bicycle route falls back only that segment while both walks keep Kakao geometry", async (t) => {
   const { loadRouteGeometry } = await importFreshRouteGeometry();

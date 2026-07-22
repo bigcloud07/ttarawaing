@@ -66,6 +66,8 @@ test("proxies walking coordinates to the public Kakao route endpoint", async () 
     assert.equal(response.status, 200);
     assert.equal(await response.text(), upstreamPayload);
     assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("x-ttarawaing-route-profile"), "walk");
+    assert.equal(response.headers.has("x-ttarawaing-bike-route-mode"), false);
     assert.match(response.headers.get("content-type") ?? "", /application\/json/i);
   } finally {
     globalThis.fetch = originalFetch;
@@ -105,6 +107,51 @@ test("forwards five bicycle waypoints and the whitelisted route mode", async () 
     );
 
     assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-ttarawaing-route-profile"), "bike");
+    assert.equal(
+      response.headers.get("x-ttarawaing-bike-route-mode"),
+      "BIKE_ONLY",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps the Seoul Forest station route on Kakao bicycle BIKE_ONLY", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    assert.equal(url.origin, "https://dapi.kakao.com");
+    assert.equal(url.pathname, "/v2/routing/bicycle");
+    assert.equal(url.searchParams.get("start_x"), "127.04277039");
+    assert.equal(url.searchParams.get("start_y"), "37.54195786");
+    assert.equal(url.searchParams.get("end_x"), "127.04766846");
+    assert.equal(url.searchParams.get("end_y"), "37.54695892");
+    assert.equal(url.searchParams.get("route_mode"), "BIKE_ONLY");
+    return Response.json({ status: "OK", route: { legs: [] } });
+  };
+
+  try {
+    const worker = await importWorker("seoul-forest-bike-regression");
+    const response = await worker.fetch(
+      routeRequest({
+        mode: "bike",
+        bikeRouteMode: "BIKE_ONLY",
+        coordinates: [
+          [37.54195786, 127.04277039],
+          [37.54695892, 127.04766846],
+        ],
+      }),
+      { KAKAO_REST_API_KEY: "test-rest-key" },
+      ctx,
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-ttarawaing-route-profile"), "bike");
+    assert.equal(
+      response.headers.get("x-ttarawaing-bike-route-mode"),
+      "BIKE_ONLY",
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

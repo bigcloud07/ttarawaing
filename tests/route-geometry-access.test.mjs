@@ -52,17 +52,27 @@ function successfulRouteResponse(init = {}, customizeLeg) {
       ],
     };
   });
-  return Response.json({
-    status: "OK",
-    route: {
-      properties: {
-        totalDistance: legs.reduce((sum, leg) => sum + leg.properties.distance, 0),
-        totalTime: legs.reduce((sum, leg) => sum + leg.properties.time, 0),
-        landingUrl: "https://map.kakao.com/",
+  return Response.json(
+    {
+      status: "OK",
+      route: {
+        properties: {
+          totalDistance: legs.reduce((sum, leg) => sum + leg.properties.distance, 0),
+          totalTime: legs.reduce((sum, leg) => sum + leg.properties.time, 0),
+          landingUrl: "https://map.kakao.com/",
+        },
+        legs,
       },
-      legs,
     },
-  });
+    {
+      headers: {
+        "X-Ttarawaing-Route-Profile": request.mode,
+        ...(request.mode === "bike"
+          ? { "X-Ttarawaing-Bike-Route-Mode": request.bikeRouteMode }
+          : {}),
+      },
+    },
+  );
 }
 
 test("uses coordinates and the bicycle route mode—not address text—in the Kakao cache key", async () => {
