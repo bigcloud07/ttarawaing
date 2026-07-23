@@ -1508,7 +1508,14 @@ input:focus-visible {
 }
 
 .kakao-route-marker.is-draggable-visual {
-  pointer-events: none;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.kakao-route-marker.is-draggable-visual.is-dragging {
+  cursor: grabbing;
 }
 
 .route-marker-wrapper:focus-visible {

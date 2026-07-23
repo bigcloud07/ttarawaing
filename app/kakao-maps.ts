@@ -20,8 +20,20 @@ export type KakaoLatLngBounds = {
   extend(position: KakaoLatLng): void;
 };
 
+export type KakaoPoint = {
+  x: number;
+  y: number;
+};
+
+export type KakaoMapProjection = {
+  containerPointFromCoords(position: KakaoLatLng): KakaoPoint;
+  coordsFromContainerPoint(point: KakaoPoint): KakaoLatLng;
+};
+
 export type KakaoMap = {
   getCenter(): KakaoLatLng;
+  getDraggable(): boolean;
+  getProjection(): KakaoMapProjection;
   setCenter(position: KakaoLatLng): void;
   setBounds(
     bounds: KakaoLatLngBounds,
@@ -32,6 +44,7 @@ export type KakaoMap = {
   ): void;
   relayout(): void;
   panTo(position: KakaoLatLng): void;
+  setDraggable(draggable: boolean): void;
   setLevel(level: number): void;
 };
 
@@ -39,18 +52,8 @@ export type KakaoMapObject = {
   setMap(map: KakaoMap | null): void;
 };
 
-export type KakaoMarkerImage = {
-  readonly __kakaoMarkerImage?: never;
-};
-
-export type KakaoMarker = KakaoMapObject & {
-  getPosition(): KakaoLatLng;
-  setPosition(position: KakaoLatLng): void;
-  setDraggable(draggable: boolean): void;
-  setOpacity(opacity: number): void;
-};
-
 export type KakaoCustomOverlay = KakaoMapObject & {
+  getPosition(): KakaoLatLng;
   setPosition(position: KakaoLatLng): void;
 };
 
@@ -106,34 +109,7 @@ export type KakaoSdk = {
       strokeStyle?: string;
       zIndex?: number;
     }) => KakaoMapObject;
-    Marker: new (options: {
-      map?: KakaoMap;
-      position: KakaoLatLng;
-      image?: KakaoMarkerImage;
-      title?: string;
-      draggable?: boolean;
-      clickable?: boolean;
-      zIndex?: number;
-      opacity?: number;
-    }) => KakaoMarker;
-    MarkerImage: new (
-      src: string,
-      size: { width: number; height: number },
-      options?: {
-        offset?: { x: number; y: number };
-        alt?: string;
-        shape?: string;
-        coords?: string;
-      },
-    ) => KakaoMarkerImage;
-    Size: new (width: number, height: number) => {
-      width: number;
-      height: number;
-    };
-    Point: new (x: number, y: number) => {
-      x: number;
-      y: number;
-    };
+    Point: new (x: number, y: number) => KakaoPoint;
     CustomOverlay: new (options: {
       map: KakaoMap;
       position: KakaoLatLng;
@@ -145,15 +121,16 @@ export type KakaoSdk = {
     }) => KakaoCustomOverlay;
     event: {
       addListener(
-        target: KakaoMap | KakaoMarker,
+        target: KakaoMap,
         type: string,
         handler: () => void,
       ): void;
       removeListener(
-        target: KakaoMap | KakaoMarker,
+        target: KakaoMap,
         type: string,
         handler: () => void,
       ): void;
+      preventMap(): void;
     };
     services: {
       Places: new () => KakaoPlaces;

@@ -668,11 +668,7 @@ test("focuses and zooms the map when a route pin is activated", async () => {
   assert.match(kakaoSource, /`\$\{tooltip\} 핀\. 드래그해서 위치 변경`/);
   assert.match(
     kakaoSource,
-    /wrapper\.addEventListener\("click", \(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?onFocusMarker\(coordinates\);/,
-  );
-  assert.match(
-    kakaoSource,
-    /sdk\.maps\.event\.addListener\(dragMarker, "click", \(\) => \{[\s\S]*?dragMarker\.getPosition\(\);[\s\S]*?onFocusMarker\(\[position\.getLat\(\), position\.getLng\(\)\]\);/,
+    /wrapper\.addEventListener\("click", \(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?overlay\.getPosition\(\);[\s\S]*?onFocusMarker\(\[position\.getLat\(\), position\.getLng\(\)\]\);/,
   );
   assert.match(
     kakaoSource,
@@ -713,21 +709,65 @@ test("drags only the start and destination pins and recommits the route", async 
   assert.match(leafletMapSource, /\.on\("dragstart", onEndpointDragStart\)/);
   assert.match(leafletMapSource, /\.on\("dragend", \(\) => \{/);
   assert.match(leafletMapSource, /onEndpointMove\(endpoint,/);
-  assert.match(kakaoMapSource, /new sdk\.maps\.Marker\(\{/);
-  assert.match(kakaoMapSource, /draggable:\s*true/);
-  assert.match(kakaoMapSource, /opacity:\s*0\.01/);
   assert.match(kakaoMapSource, /wrapper\.classList\.add\("is-draggable-visual"\)/);
+  assert.doesNotMatch(kakaoMapSource, /new sdk\.maps\.Marker\(\{/);
   assert.match(
     kakaoMapSource,
-    /sdk\.maps\.event\.addListener\(dragMarker, "drag", \(\) => \{[\s\S]*?overlay\.setPosition\(dragMarker\.getPosition\(\)\);/,
+    /wrapper\.addEventListener\("pointerdown", \(event\) => \{/,
   );
   assert.match(
     kakaoMapSource,
-    /dragMarker,\s*"dragstart",\s*onEndpointDragStart/,
+    /wrapper\.addEventListener\("pointermove", \(event\) => \{/,
   );
   assert.match(
     kakaoMapSource,
-    /sdk\.maps\.event\.addListener\(dragMarker, "dragend", \(\) => \{/,
+    /wrapper\.addEventListener\("pointerup", \(event\) => \{/,
+  );
+  assert.match(
+    kakaoMapSource,
+    /wrapper\.addEventListener\("pointercancel", \(event\) => \{/,
+  );
+  assert.match(
+    kakaoMapSource,
+    /wrapper\.addEventListener\("lostpointercapture", \(event\) => \{/,
+  );
+  assert.match(kakaoMapSource, /wrapper\.setPointerCapture\(event\.pointerId\)/);
+  assert.match(
+    kakaoMapSource,
+    /wrapper\.releasePointerCapture\(event\.pointerId\)/,
+  );
+  assert.match(kakaoMapSource, /map\.setDraggable\(false\)/);
+  assert.match(kakaoMapSource, /map\.getDraggable\(\)/);
+  assert.match(kakaoMapSource, /map\.setDraggable\(state\.mapWasDraggable\)/);
+  assert.match(
+    kakaoMapSource,
+    /projection\.containerPointFromCoords\(overlay\.getPosition\(\)\)/,
+  );
+  assert.match(kakaoMapSource, /getDraggedOverlayPoint\(/);
+  assert.match(
+    kakaoMapSource,
+    /\.coordsFromContainerPoint\(\s*new sdk\.maps\.Point\(point\.x, point\.y\),?\s*\)/,
+  );
+  assert.match(kakaoMapSource, /overlay\.setPosition\(position\)/);
+  assert.match(kakaoMapSource, /sdk\.maps\.event\.preventMap\(\)/);
+  assert.match(kakaoMapSource, /hasMeaningfulOverlayDrag\(/);
+  assert.match(kakaoMapSource, /suppressClickUntil = Date\.now\(\) \+ 500/);
+  assert.match(kakaoMapSource, /onEndpointDragStart\(\)/);
+  assert.match(
+    kakaoMapSource,
+    /onEndpointMove\(endpoint, \[\s*position\.getLat\(\),\s*position\.getLng\(\),\s*\]\)/,
+  );
+  assert.match(
+    kakaoMapSource,
+    /if \(active && !accepted\) overlay\.setPosition\(markerPosition\)/,
+  );
+  assert.match(
+    kakaoMapSource,
+    /\.then\(settleEndpointMove, \(\) => settleEndpointMove\(false\)\)/,
+  );
+  assert.match(
+    kakaoMapSource,
+    /endpointDragCleanups\.forEach\(\(cleanup\) => cleanup\(\)\)/,
   );
   assert.equal(
     (pageSource.match(/plan\.origin\.name,\s*"origin"/g) ?? []).length,
@@ -745,6 +785,14 @@ test("drags only the start and destination pins and recommits the route", async 
   assert.match(kakaoSource, /coord2Address\(longitude, latitude/);
   assert.match(styles, /\.leaflet-marker-draggable\s*\{[^}]*cursor:\s*grab/s);
   assert.match(
+    styles,
+    /\.kakao-route-marker\.is-draggable-visual\s*\{[^}]*cursor:\s*grab[^}]*touch-action:\s*none[^}]*-webkit-user-select:\s*none[^}]*user-select:\s*none/s,
+  );
+  assert.match(
+    styles,
+    /\.kakao-route-marker\.is-draggable-visual\.is-dragging\s*\{[^}]*cursor:\s*grabbing/s,
+  );
+  assert.doesNotMatch(
     styles,
     /\.kakao-route-marker\.is-draggable-visual\s*\{[^}]*pointer-events:\s*none/s,
   );

@@ -86,6 +86,10 @@ import {
   getMobileRouteSheetDragAction,
   shouldSuppressMobileRouteSheetClick,
 } from "./mobile-route-sheet";
+import {
+  getDraggedOverlayPoint,
+  hasMeaningfulOverlayDrag,
+} from "./kakao-overlay-drag";
 import stationCatalog from "./data/seoul-bike-stations.json";
 import type {
   KakaoCustomOverlay,
@@ -618,56 +622,6 @@ function createCurrentLocationMarkerElement() {
   dot.className = "current-location-dot";
   marker.append(direction, dot);
   return marker;
-}
-
-function createKakaoEndpointMarkerImage(
-  sdk: KakaoSdk,
-  label: string,
-  color: string,
-  alt: string,
-) {
-  const canvas = document.createElement("canvas");
-  const scale = 2;
-  canvas.width = 60 * scale;
-  canvas.height = 60 * scale;
-  const context = canvas.getContext("2d");
-  if (!context) return null;
-
-  context.scale(scale, scale);
-  context.save();
-  context.shadowColor = "rgba(25, 46, 37, 0.24)";
-  context.shadowBlur = 7;
-  context.shadowOffsetY = 3;
-  context.beginPath();
-  context.moveTo(30, 58);
-  context.bezierCurveTo(26, 51, 9, 39, 9, 26);
-  context.bezierCurveTo(9, 14, 18, 7, 30, 7);
-  context.bezierCurveTo(42, 7, 51, 14, 51, 26);
-  context.bezierCurveTo(51, 39, 34, 51, 30, 58);
-  context.closePath();
-  context.fillStyle = color;
-  context.fill();
-  context.shadowColor = "transparent";
-  context.lineWidth = 3;
-  context.strokeStyle = "#ffffff";
-  context.stroke();
-  context.fillStyle = "#ffffff";
-  context.font = '800 10px "Pretendard", "Noto Sans KR", sans-serif';
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(label, 30, 27);
-  context.restore();
-
-  return new sdk.maps.MarkerImage(
-    canvas.toDataURL("image/png"),
-    new sdk.maps.Size(60, 60),
-    {
-      offset: new sdk.maps.Point(30, 60),
-      alt,
-      shape: "rect",
-      coords: "0,0,60,60",
-    },
-  );
 }
 
 function updateCurrentLocationHeading(
@@ -1893,6 +1847,7 @@ function KakaoRouteMap({
       });
       mapObjectsRef.current.push(polyline);
     };
+    const endpointDragCleanups: Array<() => void> = [];
     const addMarker = (
       coordinates: Coordinates,
       label: string,
@@ -1913,10 +1868,6 @@ function KakaoRouteMap({
           ? `${tooltip} 핀. 드래그해서 위치 변경`
           : `${tooltip} 지도 핀으로 이동`,
       );
-      wrapper.addEventListener("click", (event) => {
-        event.stopPropagation();
-        onFocusMarker(coordinates);
-      });
       const marker = document.createElement("span");
       marker.className = `route-marker ${className}`;
       const markerShape = document.createElement("span");
@@ -1939,52 +1890,161 @@ function KakaoRouteMap({
       });
       mapObjectsRef.current.push(overlay);
 
-      if (!endpoint) return;
-      const markerImage = createKakaoEndpointMarkerImage(
-        sdk,
-        label,
-        endpoint === "origin" ? "#3b5ccc" : "#ed6a4a",
-        `${tooltip} 핀`,
-      );
-      const dragMarker = new sdk.maps.Marker({
-        map,
-        position: markerPosition,
-        ...(markerImage ? { image: markerImage } : {}),
-        title: `${tooltip} 핀. 드래그해서 위치 변경`,
-        draggable: true,
-        clickable: true,
-        opacity: 0.01,
-        zIndex: 5,
-      });
-      sdk.maps.event.addListener(dragMarker, "click", () => {
-        const position = dragMarker.getPosition();
+      let suppressClickUntil = 0;
+      wrapper.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (Date.now() < suppressClickUntil) {
+          event.preventDefault();
+          return;
+        }
+        const position = overlay.getPosition();
         onFocusMarker([position.getLat(), position.getLng()]);
       });
-      sdk.maps.event.addListener(
-        dragMarker,
-        "dragstart",
-        onEndpointDragStart,
-      );
-      sdk.maps.event.addListener(dragMarker, "drag", () => {
-        overlay.setPosition(dragMarker.getPosition());
-      });
-      sdk.maps.event.addListener(dragMarker, "dragend", () => {
-        dragMarker.setDraggable(false);
-        const position = dragMarker.getPosition();
+
+      if (!endpoint) return;
+      let endpointMovePending = false;
+      let dragState: {
+        pointerId: number;
+        startPointer: { x: number; y: number };
+        lastPointer: { x: number; y: number };
+        moved: boolean;
+        mapWasDraggable: boolean;
+      } | null = null;
+
+      const moveOverlayWithPointer = (
+        state: NonNullable<typeof dragState>,
+        event: PointerEvent,
+      ) => {
+        const projection = map.getProjection();
+        const currentPointer = { x: event.clientX, y: event.clientY };
+        const point = getDraggedOverlayPoint(
+          projection.containerPointFromCoords(overlay.getPosition()),
+          state.lastPointer,
+          currentPointer,
+        );
+        const position = projection.coordsFromContainerPoint(
+          new sdk.maps.Point(point.x, point.y),
+        );
+        state.lastPointer = currentPointer;
         overlay.setPosition(position);
+      };
+
+      const finishPointerDrag = (
+        event: PointerEvent,
+        canceled = false,
+      ) => {
+        const state = dragState;
+        if (!state || state.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        sdk.maps.event.preventMap();
+        if (!canceled && state.moved) {
+          moveOverlayWithPointer(state, event);
+        }
+        dragState = null;
+        wrapper.classList.remove("is-dragging");
+        map.setDraggable(state.mapWasDraggable);
+        if (
+          event.type !== "lostpointercapture" &&
+          wrapper.hasPointerCapture(event.pointerId)
+        ) {
+          wrapper.releasePointerCapture(event.pointerId);
+        }
+
+        if (canceled) {
+          overlay.setPosition(markerPosition);
+          return;
+        }
+
+        suppressClickUntil = Date.now() + 500;
+        if (!state.moved) {
+          const position = overlay.getPosition();
+          onFocusMarker([position.getLat(), position.getLng()]);
+          return;
+        }
+
+        endpointMovePending = true;
+        wrapper.setAttribute("aria-busy", "true");
+        const position = overlay.getPosition();
+        const settleEndpointMove = (accepted: boolean) => {
+          if (active && !accepted) overlay.setPosition(markerPosition);
+          endpointMovePending = false;
+          if (active) wrapper.removeAttribute("aria-busy");
+        };
         void onEndpointMove(endpoint, [
           position.getLat(),
           position.getLng(),
-        ]).then((accepted) => {
-          if (!active) return;
-          if (!accepted) {
-            dragMarker.setPosition(markerPosition);
-            overlay.setPosition(markerPosition);
-          }
-          dragMarker.setDraggable(true);
-        });
+        ]).then(settleEndpointMove, () => settleEndpointMove(false));
+      };
+
+      wrapper.addEventListener("pointerdown", (event) => {
+        if (
+          !event.isPrimary ||
+          (event.pointerType === "mouse" && event.button !== 0)
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        sdk.maps.event.preventMap();
+        if (endpointMovePending || dragState) return;
+        const startPointer = { x: event.clientX, y: event.clientY };
+        const mapWasDraggable = map.getDraggable();
+        dragState = {
+          pointerId: event.pointerId,
+          startPointer,
+          lastPointer: startPointer,
+          moved: false,
+          mapWasDraggable,
+        };
+        map.setDraggable(false);
+        try {
+          wrapper.setPointerCapture(event.pointerId);
+        } catch {
+          dragState = null;
+          map.setDraggable(mapWasDraggable);
+        }
       });
-      mapObjectsRef.current.push(dragMarker);
+
+      wrapper.addEventListener("pointermove", (event) => {
+        const state = dragState;
+        if (!state || state.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        sdk.maps.event.preventMap();
+        if (
+          !state.moved &&
+          hasMeaningfulOverlayDrag(state.startPointer, {
+            x: event.clientX,
+            y: event.clientY,
+          })
+        ) {
+          state.moved = true;
+          wrapper.classList.add("is-dragging");
+          onEndpointDragStart();
+        }
+        if (state.moved) moveOverlayWithPointer(state, event);
+      });
+      wrapper.addEventListener("pointerup", (event) => {
+        finishPointerDrag(event);
+      });
+      wrapper.addEventListener("pointercancel", (event) => {
+        finishPointerDrag(event, true);
+      });
+      wrapper.addEventListener("lostpointercapture", (event) => {
+        finishPointerDrag(event, true);
+      });
+      endpointDragCleanups.push(() => {
+        const state = dragState;
+        if (!state) return;
+        dragState = null;
+        wrapper.classList.remove("is-dragging");
+        map.setDraggable(state.mapWasDraggable);
+        if (wrapper.hasPointerCapture(state.pointerId)) {
+          wrapper.releasePointerCapture(state.pointerId);
+        }
+        overlay.setPosition(markerPosition);
+      });
     };
 
     const walkTo = geometry.walkTo.path;
@@ -2089,6 +2149,7 @@ function KakaoRouteMap({
     return () => {
       active = false;
       window.cancelAnimationFrame(animationFrame);
+      endpointDragCleanups.forEach((cleanup) => cleanup());
       clearMapObjects();
     };
   }, [
