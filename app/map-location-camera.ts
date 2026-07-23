@@ -61,6 +61,18 @@ export function getRotatingMapCanvasSide(width: number, height: number) {
   return Math.ceil(Math.hypot(width, height));
 }
 
+export function updateMapPinchActive(
+  previousActive: boolean,
+  touchCount: number,
+) {
+  if (!Number.isFinite(touchCount) || touchCount < 0) {
+    return previousActive;
+  }
+  if (touchCount >= 2) return true;
+  if (touchCount === 0) return false;
+  return previousActive;
+}
+
 export function relayoutPreservingMapCenter<TCenter>(
   map: CenterPreservingMap<TCenter>,
 ) {

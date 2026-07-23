@@ -1000,7 +1000,7 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.ok(
     (
       pageSource.match(
-        /runHeadingAwareMapDragStart\(nodeRef\.current, onMapDragStart\)/g,
+        /runHeadingAwareMapInteractionStart\(nodeRef\.current, onMapDragStart\)/g,
       ) ?? []
     ).length >= 2,
   );
@@ -1021,15 +1021,11 @@ test("minimizes mobile details on map drag without animating the handle", async 
       /const handleMapDragStart = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/,
     )?.[1] ?? "";
   assert.match(mapDragHandler, /minimizeMobileDetailsFromMapDrag\(\)/);
-  assert.match(mapDragHandler, /mapLocationMode !== "heading"/);
-  assert.match(mapDragHandler, /teardownMapOrientation\(\)/);
-  assert.match(mapDragHandler, /setMapLocationMode\("tracking"\)/);
-  assert.match(mapDragHandler, /setMapHeadingStatus\("idle"\)/);
-  assert.match(mapDragHandler, /setMapDeviceHeading\(null\)/);
+  assert.match(mapDragHandler, /leaveMapHeadingMode\(\)/);
   assert.doesNotMatch(mapDragHandler, /stopMapLocationTracking/);
   assert.doesNotMatch(mapDragHandler, /setMapUserLocation/);
   assert.match(pageSource, /node\.style\.transition = "none"/);
-  assert.match(pageSource, /flushSync\(onMapDragStart\)/);
+  assert.match(pageSource, /flushSync\(onInteractionStart\)/);
   assert.match(pageSource, /node\.style\.removeProperty\("transition"\)/);
   assert.match(pageSource, /useLayoutEffect\(\(\) => \{/);
   assert.match(kakaoSource, /event:\s*\{[\s\S]*?addListener[\s\S]*?removeListener/);
@@ -1044,6 +1040,65 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.match(gripRule, /background:\s*#b9c3bd/);
   assert.doesNotMatch(gripRule, /transition:|transform:|var\(--green\)/);
   assert.match(pageSource, /new ResizeObserver\(scheduleLayout\)/);
+});
+
+test("exits heading-up before native pinch zoom consumes its target", async () => {
+  const pageSource = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const pinchHook =
+    pageSource.match(
+      /function useHeadingAwareMapPinchStart\([\s\S]*?\n}\n\nfunction useHeadingUpMapCanvas/,
+    )?.[0] ?? "";
+
+  assert.match(pinchHook, /const viewport = node\?\.parentElement/);
+  assert.match(pinchHook, /event\.touches\.length/);
+  assert.match(pinchHook, /const pinchStarted = !pinchActiveRef\.current && nextActive/);
+  assert.match(pinchHook, /node\.dataset\.headingUp !== "true"/);
+  assert.match(
+    pinchHook,
+    /runHeadingAwareMapInteractionStart\(node, onMapPinchStart\)/,
+  );
+  assert.match(
+    pinchHook,
+    /viewport\.addEventListener\("touchstart", handleTouchStart, \{\s*capture: true,\s*passive: true,\s*\}\)/,
+  );
+  assert.match(
+    pinchHook,
+    /viewport\.removeEventListener\("touchstart", handleTouchStart, true\)/,
+  );
+  assert.match(pinchHook, /touchend/);
+  assert.match(pinchHook, /touchcancel/);
+  assert.match(pinchHook, /event\.touches\.length[\s\S]*?return/);
+  assert.doesNotMatch(pinchHook, /preventDefault/);
+  assert.ok(
+    (
+      pageSource.match(/useHeadingAwareMapPinchStart\(\{/g) ?? []
+    ).length >= 2,
+  );
+  assert.ok(
+    (
+      pageSource.match(/if \(pinchActiveRef\.current\) return/g) ?? []
+    ).length >= 2,
+  );
+  assert.match(pageSource, /onMapPinchStart=\{leaveMapHeadingMode\}/);
+
+  const leaveHeadingHandler =
+    pageSource.match(
+      /const leaveMapHeadingMode = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/,
+    )?.[1] ?? "";
+  assert.match(
+    leaveHeadingHandler,
+    /mapLocationModeRef\.current !== "heading"/,
+  );
+  assert.match(leaveHeadingHandler, /teardownMapOrientation\(\)/);
+  assert.match(leaveHeadingHandler, /setMapLocationMode\("tracking"\)/);
+  assert.match(leaveHeadingHandler, /setMapHeadingStatus\("idle"\)/);
+  assert.match(leaveHeadingHandler, /setMapDeviceHeading\(null\)/);
+  assert.doesNotMatch(leaveHeadingHandler, /minimizeMobileDetailsFromMapDrag/);
+  assert.doesNotMatch(leaveHeadingHandler, /stopMapLocationTracking/);
+  assert.doesNotMatch(leaveHeadingHandler, /setMapUserLocation/);
 });
 
 test("keeps the mobile heading-up camera centered through map relayout", async () => {
