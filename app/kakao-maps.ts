@@ -1,3 +1,6 @@
+import type { ReverseGeocodedAddress } from "./route-endpoint-drag";
+import type { Coordinates } from "./route-geometry";
+
 export type KakaoPlaceResult = {
   id: string;
   place_name: string;
@@ -36,6 +39,17 @@ export type KakaoMapObject = {
   setMap(map: KakaoMap | null): void;
 };
 
+export type KakaoMarkerImage = {
+  readonly __kakaoMarkerImage?: never;
+};
+
+export type KakaoMarker = KakaoMapObject & {
+  getPosition(): KakaoLatLng;
+  setPosition(position: KakaoLatLng): void;
+  setDraggable(draggable: boolean): void;
+  setOpacity(opacity: number): void;
+};
+
 export type KakaoCustomOverlay = KakaoMapObject & {
   setPosition(position: KakaoLatLng): void;
 };
@@ -53,6 +67,24 @@ type KakaoPlaces = {
       size?: number;
       sort?: string;
     },
+  ): void;
+};
+
+type KakaoAddressResult = {
+  address?: {
+    address_name?: string;
+  } | null;
+  road_address?: {
+    address_name?: string;
+    building_name?: string;
+  } | null;
+};
+
+type KakaoGeocoder = {
+  coord2Address(
+    longitude: number,
+    latitude: number,
+    callback: (results: KakaoAddressResult[], status: string) => void,
   ): void;
 };
 
@@ -74,6 +106,34 @@ export type KakaoSdk = {
       strokeStyle?: string;
       zIndex?: number;
     }) => KakaoMapObject;
+    Marker: new (options: {
+      map?: KakaoMap;
+      position: KakaoLatLng;
+      image?: KakaoMarkerImage;
+      title?: string;
+      draggable?: boolean;
+      clickable?: boolean;
+      zIndex?: number;
+      opacity?: number;
+    }) => KakaoMarker;
+    MarkerImage: new (
+      src: string,
+      size: { width: number; height: number },
+      options?: {
+        offset?: { x: number; y: number };
+        alt?: string;
+        shape?: string;
+        coords?: string;
+      },
+    ) => KakaoMarkerImage;
+    Size: new (width: number, height: number) => {
+      width: number;
+      height: number;
+    };
+    Point: new (x: number, y: number) => {
+      x: number;
+      y: number;
+    };
     CustomOverlay: new (options: {
       map: KakaoMap;
       position: KakaoLatLng;
@@ -85,18 +145,19 @@ export type KakaoSdk = {
     }) => KakaoCustomOverlay;
     event: {
       addListener(
-        target: KakaoMap,
+        target: KakaoMap | KakaoMarker,
         type: string,
         handler: () => void,
       ): void;
       removeListener(
-        target: KakaoMap,
+        target: KakaoMap | KakaoMarker,
         type: string,
         handler: () => void,
       ): void;
     };
     services: {
       Places: new () => KakaoPlaces;
+      Geocoder: new () => KakaoGeocoder;
       Status: {
         OK: string;
         ZERO_RESULT: string;
@@ -121,6 +182,7 @@ const KAKAO_CONFIG_ENDPOINT = "/api/config/kakao";
 const SDK_LOAD_TIMEOUT_MS = 10_000;
 export const KAKAO_CONFIG_TIMEOUT_MS = 8_000;
 export const KAKAO_PLACE_SEARCH_TIMEOUT_MS = 8_000;
+export const KAKAO_REVERSE_GEOCODE_TIMEOUT_MS = 8_000;
 
 let kakaoSdkPromise: Promise<KakaoSdk> | null = null;
 
@@ -324,6 +386,69 @@ export function searchKakaoKeyword(
       finish(() => reject(error));
     }
   });
+}
+
+export function reverseGeocodeKakaoCoordinates(
+  sdk: KakaoSdk,
+  [latitude, longitude]: Coordinates,
+  timeoutMs = KAKAO_REVERSE_GEOCODE_TIMEOUT_MS,
+) {
+  return new Promise<ReverseGeocodedAddress | null>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      callback();
+    };
+    const timeoutId = globalThis.setTimeout(
+      () =>
+        finish(() =>
+          reject(new Error("Kakao reverse geocoding request timed out.")),
+        ),
+      timeoutMs,
+    );
+
+    try {
+      if (!sdk.maps.services.Geocoder) {
+        finish(() =>
+          reject(new Error("Kakao reverse geocoding is unavailable.")),
+        );
+        return;
+      }
+      const geocoder = new sdk.maps.services.Geocoder();
+      geocoder.coord2Address(longitude, latitude, (results, status) => {
+        if (status === sdk.maps.services.Status.OK) {
+          const result = results[0];
+          if (!result) {
+            finish(() => resolve(null));
+            return;
+          }
+          finish(() =>
+            resolve({
+              address: result.address?.address_name?.trim() ?? "",
+              roadAddress: result.road_address?.address_name?.trim() ?? "",
+              buildingName:
+                result.road_address?.building_name?.trim() ?? "",
+            }),
+          );
+          return;
+        }
+        if (status === sdk.maps.services.Status.ZERO_RESULT) {
+          finish(() => resolve(null));
+          return;
+        }
+        finish(() => reject(new Error("Kakao reverse geocoding failed.")));
+      });
+    } catch (error) {
+      finish(() => reject(error));
+    }
+  });
+}
+
+export async function reverseGeocodeKakao(coordinates: Coordinates) {
+  const sdk = await loadKakaoMapsSdk();
+  return reverseGeocodeKakaoCoordinates(sdk, coordinates);
 }
 
 function buildRegionalKeywords(query: string) {

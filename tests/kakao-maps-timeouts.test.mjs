@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   KAKAO_CONFIG_TIMEOUT_MS,
   KAKAO_PLACE_SEARCH_TIMEOUT_MS,
+  KAKAO_REVERSE_GEOCODE_TIMEOUT_MS,
   getKakaoJavascriptKey,
+  reverseGeocodeKakaoCoordinates,
   searchKakaoKeyword,
 } from "../app/kakao-maps.ts";
 
@@ -24,6 +26,25 @@ function createSearchSdk(keywordSearch) {
         SortBy: {
           ACCURACY: "ACCURACY",
           DISTANCE: "DISTANCE",
+        },
+      },
+    },
+  };
+}
+
+function createGeocoderSdk(coord2Address) {
+  return {
+    maps: {
+      services: {
+        Geocoder: class {
+          coord2Address(...args) {
+            coord2Address(...args);
+          }
+        },
+        Status: {
+          OK: "OK",
+          ZERO_RESULT: "ZERO_RESULT",
+          ERROR: "ERROR",
         },
       },
     },
@@ -140,9 +161,63 @@ test("preserves Kakao place search success, empty, and error results", async (t)
   });
 });
 
+test("reverse geocodes dragged coordinates with longitude before latitude", async () => {
+  const sdk = createGeocoderSdk((longitude, latitude, callback) => {
+    assert.equal(longitude, 126.978);
+    assert.equal(latitude, 37.5665);
+    callback(
+      [
+        {
+          address: { address_name: "서울 중구 태평로1가 31" },
+          road_address: {
+            address_name: "서울 중구 세종대로 110",
+            building_name: "서울특별시청",
+          },
+        },
+      ],
+      "OK",
+    );
+  });
+
+  assert.deepEqual(
+    await reverseGeocodeKakaoCoordinates(
+      sdk,
+      [37.5665, 126.978],
+      50,
+    ),
+    {
+      address: "서울 중구 태평로1가 31",
+      roadAddress: "서울 중구 세종대로 110",
+      buildingName: "서울특별시청",
+    },
+  );
+});
+
+test("handles empty and stalled Kakao reverse geocoding", async (t) => {
+  await t.test("zero results", async () => {
+    const sdk = createGeocoderSdk((_longitude, _latitude, callback) => {
+      callback([], "ZERO_RESULT");
+    });
+    assert.equal(
+      await reverseGeocodeKakaoCoordinates(sdk, [37.5, 127], 50),
+      null,
+    );
+  });
+
+  await t.test("timeout", async () => {
+    const sdk = createGeocoderSdk(() => {});
+    await assert.rejects(
+      reverseGeocodeKakaoCoordinates(sdk, [37.5, 127], 5),
+      /reverse geocoding request timed out/i,
+    );
+  });
+});
+
 test("uses bounded production timeout defaults", () => {
   assert.ok(KAKAO_CONFIG_TIMEOUT_MS > 0);
   assert.ok(KAKAO_CONFIG_TIMEOUT_MS <= 10_000);
   assert.ok(KAKAO_PLACE_SEARCH_TIMEOUT_MS > 0);
   assert.ok(KAKAO_PLACE_SEARCH_TIMEOUT_MS <= 10_000);
+  assert.ok(KAKAO_REVERSE_GEOCODE_TIMEOUT_MS > 0);
+  assert.ok(KAKAO_REVERSE_GEOCODE_TIMEOUT_MS <= 10_000);
 });

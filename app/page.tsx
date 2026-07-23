@@ -38,8 +38,13 @@ import type {
 import {
   isSupportedPlaceAddress,
   loadKakaoMapsSdk,
+  reverseGeocodeKakao,
   searchKakaoPlaces,
 } from "./kakao-maps";
+import {
+  createDraggedRoutePlace,
+  isSupportedRouteCoordinate,
+} from "./route-endpoint-drag";
 import {
   createDirectRouteGeometry,
   createRouteGeometryKey,
@@ -89,6 +94,7 @@ import type {
   KakaoPlaceResult,
   KakaoSdk,
 } from "./kakao-maps";
+import type { RouteEndpointKind } from "./route-endpoint-drag";
 import type {
   BikeRouteLeg,
   Coordinates,
@@ -138,6 +144,12 @@ type RouteHistoryItem = {
   destination: Place;
 };
 
+type CommitRouteOptions = {
+  remember?: boolean;
+  expandMobileDetails?: boolean;
+  preserveEndpointMoveRequests?: boolean;
+};
+
 type RouteRecommendation = {
   key: string;
   plan: RoutePlan;
@@ -154,6 +166,11 @@ type MapFocusRequest = {
   coordinates: Coordinates;
   requestId: number;
 };
+
+type RouteEndpointMoveHandler = (
+  endpoint: RouteEndpointKind,
+  coordinates: Coordinates,
+) => Promise<boolean>;
 
 const ROUTE_FOCUS_LEAFLET_ZOOM = 18;
 const ROUTE_FOCUS_KAKAO_LEVEL = 2;
@@ -601,6 +618,56 @@ function createCurrentLocationMarkerElement() {
   dot.className = "current-location-dot";
   marker.append(direction, dot);
   return marker;
+}
+
+function createKakaoEndpointMarkerImage(
+  sdk: KakaoSdk,
+  label: string,
+  color: string,
+  alt: string,
+) {
+  const canvas = document.createElement("canvas");
+  const scale = 2;
+  canvas.width = 60 * scale;
+  canvas.height = 60 * scale;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  context.scale(scale, scale);
+  context.save();
+  context.shadowColor = "rgba(25, 46, 37, 0.24)";
+  context.shadowBlur = 7;
+  context.shadowOffsetY = 3;
+  context.beginPath();
+  context.moveTo(30, 58);
+  context.bezierCurveTo(26, 51, 9, 39, 9, 26);
+  context.bezierCurveTo(9, 14, 18, 7, 30, 7);
+  context.bezierCurveTo(42, 7, 51, 14, 51, 26);
+  context.bezierCurveTo(51, 39, 34, 51, 30, 58);
+  context.closePath();
+  context.fillStyle = color;
+  context.fill();
+  context.shadowColor = "transparent";
+  context.lineWidth = 3;
+  context.strokeStyle = "#ffffff";
+  context.stroke();
+  context.fillStyle = "#ffffff";
+  context.font = '800 10px "Pretendard", "Noto Sans KR", sans-serif';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(label, 30, 27);
+  context.restore();
+
+  return new sdk.maps.MarkerImage(
+    canvas.toDataURL("image/png"),
+    new sdk.maps.Size(60, 60),
+    {
+      offset: new sdk.maps.Point(30, 60),
+      alt,
+      shape: "rect",
+      coords: "0,0,60,60",
+    },
+  );
 }
 
 function updateCurrentLocationHeading(
@@ -1172,6 +1239,8 @@ function LeafletRouteMap({
   onFocusNextTarget,
   onFocusMarker,
   onMapDragStart,
+  onEndpointDragStart,
+  onEndpointMove,
 }: {
   plan: RoutePlan;
   nextRouteLeg: PlannedRouteLeg;
@@ -1190,6 +1259,8 @@ function LeafletRouteMap({
   onFocusNextTarget: () => void;
   onFocusMarker: (coordinates: Coordinates) => void;
   onMapDragStart: () => void;
+  onEndpointDragStart: () => void;
+  onEndpointMove: RouteEndpointMoveHandler;
 }) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -1309,6 +1380,7 @@ function LeafletRouteMap({
         label: string,
         className: string,
         tooltip: string,
+        endpoint?: RouteEndpointKind,
       ) => {
         const routeMarker = L.marker(coordinates, {
           icon: L.divIcon({
@@ -1318,10 +1390,31 @@ function LeafletRouteMap({
             iconAnchor: [30, 60],
           }),
           keyboard: true,
-          title: `${tooltip} 지도 핀으로 이동`,
+          title: endpoint
+            ? `${tooltip} 핀. 드래그해서 위치 변경`
+            : `${tooltip} 지도 핀으로 이동`,
+          draggable: Boolean(endpoint),
+          autoPan: Boolean(endpoint),
         })
           .bindTooltip(tooltip, { direction: "top", offset: [0, -54] })
-          .on("click", () => onFocusMarker(coordinates));
+          .on("click", () => {
+            const position = routeMarker.getLatLng();
+            onFocusMarker([position.lat, position.lng]);
+          });
+        if (endpoint) {
+          routeMarker.on("dragstart", onEndpointDragStart);
+          routeMarker.on("dragend", () => {
+            routeMarker.dragging?.disable();
+            const position = routeMarker.getLatLng();
+            void onEndpointMove(endpoint, [position.lat, position.lng]).then(
+              (accepted) => {
+                if (!active) return;
+                if (!accepted) routeMarker.setLatLng(coordinates);
+                routeMarker.dragging?.enable();
+              },
+            );
+          });
+        }
         routeMarker.addTo(group);
       };
 
@@ -1362,7 +1455,13 @@ function LeafletRouteMap({
         lineCap: "round",
       }).addTo(group);
 
-      marker(plan.origin.coordinates, "출발", "origin-marker", plan.origin.name);
+      marker(
+        plan.origin.coordinates,
+        "출발",
+        "origin-marker",
+        plan.origin.name,
+        "origin",
+      );
       marker(
         plan.startStation.coordinates,
         "대여",
@@ -1388,6 +1487,7 @@ function LeafletRouteMap({
         "도착",
         "destination-marker",
         plan.destination.name,
+        "destination",
       );
 
       plan.alternatives
@@ -1439,7 +1539,16 @@ function LeafletRouteMap({
     return () => {
       active = false;
     };
-  }, [geometry, geometryStatus, onFocusMarker, plan, ready, transferStops]);
+  }, [
+    geometry,
+    geometryStatus,
+    onEndpointDragStart,
+    onEndpointMove,
+    onFocusMarker,
+    plan,
+    ready,
+    transferStops,
+  ]);
 
   useEffect(() => {
     if (!ready || !mapRef.current || !focusRequest) return;
@@ -1590,6 +1699,8 @@ function KakaoRouteMap({
   onFocusNextTarget,
   onFocusMarker,
   onMapDragStart,
+  onEndpointDragStart,
+  onEndpointMove,
   onError,
 }: {
   plan: RoutePlan;
@@ -1609,6 +1720,8 @@ function KakaoRouteMap({
   onFocusNextTarget: () => void;
   onFocusMarker: (coordinates: Coordinates) => void;
   onMapDragStart: () => void;
+  onEndpointDragStart: () => void;
+  onEndpointMove: RouteEndpointMoveHandler;
   onError: () => void;
 }) {
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -1730,6 +1843,7 @@ function KakaoRouteMap({
     const sdk = sdkRef.current;
     const map = mapRef.current;
     if (!ready || !sdk || !map) return;
+    let active = true;
 
     clearMapObjects();
     const toLatLng = ([latitude, longitude]: Coordinates) =>
@@ -1756,6 +1870,7 @@ function KakaoRouteMap({
       });
 
       return () => {
+        active = false;
         window.cancelAnimationFrame(animationFrame);
         clearMapObjects();
       };
@@ -1783,7 +1898,45 @@ function KakaoRouteMap({
       label: string,
       className: string,
       tooltip: string,
+      endpoint?: RouteEndpointKind,
     ) => {
+      if (endpoint) {
+        const markerImage = createKakaoEndpointMarkerImage(
+          sdk,
+          label,
+          endpoint === "origin" ? "#3b5ccc" : "#ed6a4a",
+          `${tooltip} 핀`,
+        );
+        const marker = new sdk.maps.Marker({
+          map,
+          position: toLatLng(coordinates),
+          ...(markerImage ? { image: markerImage } : {}),
+          title: `${tooltip} 핀. 드래그해서 위치 변경`,
+          draggable: true,
+          clickable: true,
+          zIndex: 5,
+        });
+        sdk.maps.event.addListener(marker, "click", () => {
+          const position = marker.getPosition();
+          onFocusMarker([position.getLat(), position.getLng()]);
+        });
+        sdk.maps.event.addListener(marker, "dragstart", onEndpointDragStart);
+        sdk.maps.event.addListener(marker, "dragend", () => {
+          marker.setDraggable(false);
+          const position = marker.getPosition();
+          void onEndpointMove(endpoint, [
+            position.getLat(),
+            position.getLng(),
+          ]).then((accepted) => {
+            if (!active) return;
+            if (!accepted) marker.setPosition(toLatLng(coordinates));
+            marker.setDraggable(true);
+          });
+        });
+        mapObjectsRef.current.push(marker);
+        return;
+      }
+
       const wrapper = document.createElement("button");
       wrapper.type = "button";
       wrapper.className = `route-marker-wrapper kakao-route-marker ${className}-wrapper`;
@@ -1843,7 +1996,13 @@ function KakaoRouteMap({
       geometry.walkFrom.source === "direct" ? 0.5 : 0.9,
     );
 
-    addMarker(plan.origin.coordinates, "출발", "origin-marker", plan.origin.name);
+    addMarker(
+      plan.origin.coordinates,
+      "출발",
+      "origin-marker",
+      plan.origin.name,
+      "origin",
+    );
     addMarker(plan.startStation.coordinates, "대여", "bike-marker", plan.startStation.name);
     transferStops.forEach((station, index) => {
       addMarker(
@@ -1859,6 +2018,7 @@ function KakaoRouteMap({
       "도착",
       "destination-marker",
       plan.destination.name,
+      "destination",
     );
 
     plan.alternatives
@@ -1908,6 +2068,7 @@ function KakaoRouteMap({
     });
 
     return () => {
+      active = false;
       window.cancelAnimationFrame(animationFrame);
       clearMapObjects();
     };
@@ -1915,6 +2076,8 @@ function KakaoRouteMap({
     clearMapObjects,
     geometry,
     geometryStatus,
+    onEndpointDragStart,
+    onEndpointMove,
     onFocusMarker,
     plan,
     ready,
@@ -2030,6 +2193,8 @@ function RouteMap({
   onFocusNextTarget,
   onFocusMarker,
   onMapDragStart,
+  onEndpointDragStart,
+  onEndpointMove,
 }: {
   plan: RoutePlan;
   nextRouteLeg: PlannedRouteLeg;
@@ -2048,6 +2213,8 @@ function RouteMap({
   onFocusNextTarget: () => void;
   onFocusMarker: (coordinates: Coordinates) => void;
   onMapDragStart: () => void;
+  onEndpointDragStart: () => void;
+  onEndpointMove: RouteEndpointMoveHandler;
 }) {
   const [provider, setProvider] = useState<"loading" | "kakao" | "leaflet">("loading");
   const useLeafletFallback = useCallback(() => setProvider("leaflet"), []);
@@ -2086,6 +2253,8 @@ function RouteMap({
         onFocusNextTarget={onFocusNextTarget}
         onFocusMarker={onFocusMarker}
         onMapDragStart={onMapDragStart}
+        onEndpointDragStart={onEndpointDragStart}
+        onEndpointMove={onEndpointMove}
         onError={useLeafletFallback}
       />
     );
@@ -2110,6 +2279,8 @@ function RouteMap({
         onFocusNextTarget={onFocusNextTarget}
         onFocusMarker={onFocusMarker}
         onMapDragStart={onMapDragStart}
+        onEndpointDragStart={onEndpointDragStart}
+        onEndpointMove={onEndpointMove}
       />
     );
   }
@@ -2140,6 +2311,11 @@ export default function Home() {
     origin: Place;
     destination: Place;
   } | null>(null);
+  const committedRouteRef = useRef<RouteHistoryItem | null>(null);
+  const endpointMoveRequestIdRef = useRef<Record<RouteEndpointKind, number>>({
+    origin: 0,
+    destination: 0,
+  });
   const [routeHistory, setRouteHistory] = useState<RouteHistoryItem[]>([]);
   const [passType, setPassType] = useState<PassType>(DEFAULT_PASS_TYPE);
   const [preferBikeRoads, setPreferBikeRoads] = useState(false);
@@ -2409,7 +2585,11 @@ export default function Home() {
   }, []);
 
   const commitRoute = useCallback(
-    (nextOrigin?: Place | null, nextDestination?: Place | null) => {
+    (
+      nextOrigin?: Place | null,
+      nextDestination?: Place | null,
+      options: CommitRouteOptions = {},
+    ) => {
       const resolvedOrigin = nextOrigin ?? origin;
       const resolvedDestination = nextDestination ?? destination;
 
@@ -2426,16 +2606,24 @@ export default function Home() {
       setDestination(resolvedDestination);
       setOriginQuery(resolvedOrigin.name);
       setDestinationQuery(resolvedDestination.name);
-      setCommittedRoute({
+      const nextRoute = {
         origin: resolvedOrigin,
         destination: resolvedDestination,
-      });
+      };
+      committedRouteRef.current = nextRoute;
+      setCommittedRoute(nextRoute);
       setRouteProgressSessionId((sessionId) => sessionId + 1);
       setMapFocusRequest(null);
-      rememberRoute({ origin: resolvedOrigin, destination: resolvedDestination });
+      if (options.remember !== false) rememberRoute(nextRoute);
+      if (!options.preserveEndpointMoveRequests) {
+        endpointMoveRequestIdRef.current.origin += 1;
+        endpointMoveRequestIdRef.current.destination += 1;
+      }
       setSelectedEndStationId(undefined);
       setAlternativesOpen(false);
-      setMobileDetailsMinimized(false);
+      if (options.expandMobileDetails !== false) {
+        setMobileDetailsMinimized(false);
+      }
       setErrorMessage("");
       originLocationRequestGateRef.current.invalidate();
       return true;
@@ -2644,8 +2832,94 @@ export default function Home() {
     [teardownMapOrientation],
   );
 
+  const prepareRouteEndpointDrag = useCallback(() => {
+    pendingResultFocusRef.current = false;
+    minimizeMobileDetailsFromMapDrag();
+    stopMapLocationTracking(true);
+    setMapFocusRequest(null);
+  }, [minimizeMobileDetailsFromMapDrag, stopMapLocationTracking]);
+
+  const moveRouteEndpoint = useCallback<RouteEndpointMoveHandler>(
+    async (endpoint, coordinates) => {
+      const requestId = endpointMoveRequestIdRef.current[endpoint] + 1;
+      endpointMoveRequestIdRef.current[endpoint] = requestId;
+      const endpointLabel = endpoint === "origin" ? "출발지" : "도착지";
+
+      if (!isSupportedRouteCoordinate(coordinates)) {
+        setErrorMessage(
+          "출발지와 도착지는 서울·경기 지역 안에서 지정해 주세요.",
+        );
+        return false;
+      }
+
+      showNotice(`${endpointLabel} 위치를 확인하고 있어요…`);
+      let reverseGeocodedAddress = null;
+      let reverseGeocodeFailed = false;
+      try {
+        reverseGeocodedAddress = await reverseGeocodeKakao(coordinates);
+      } catch {
+        reverseGeocodeFailed = true;
+      }
+
+      if (endpointMoveRequestIdRef.current[endpoint] !== requestId) {
+        return false;
+      }
+
+      const resolvedAddress =
+        reverseGeocodedAddress?.roadAddress ||
+        reverseGeocodedAddress?.address ||
+        "";
+      if (
+        resolvedAddress &&
+        !isSupportedPlaceAddress(resolvedAddress)
+      ) {
+        showNotice("");
+        setErrorMessage(
+          "출발지와 도착지는 서울·경기 지역 안에서 지정해 주세요.",
+        );
+        return false;
+      }
+
+      const currentRoute = committedRouteRef.current;
+      if (!currentRoute) {
+        showNotice("");
+        return false;
+      }
+
+      const movedPlace = createDraggedRoutePlace(
+        endpoint,
+        coordinates,
+        reverseGeocodedAddress,
+      );
+      const nextOrigin =
+        endpoint === "origin" ? movedPlace : currentRoute.origin;
+      const nextDestination =
+        endpoint === "destination" ? movedPlace : currentRoute.destination;
+      const committed = commitRoute(nextOrigin, nextDestination, {
+        remember: false,
+        expandMobileDetails: false,
+        preserveEndpointMoveRequests: true,
+      });
+      if (!committed) {
+        showNotice("");
+        return false;
+      }
+
+      showNotice(
+        reverseGeocodeFailed || !resolvedAddress
+          ? `주소 정보는 찾지 못했지만 ${endpointLabel} 핀 위치로 경로를 다시 찾고 있어요.`
+          : `${endpointLabel}를 바꾸고 새 경로를 찾고 있어요.`,
+        2_800,
+      );
+      return true;
+    },
+    [commitRoute, showNotice],
+  );
+
   useEffect(
     () => () => {
+      endpointMoveRequestIdRef.current.origin += 1;
+      endpointMoveRequestIdRef.current.destination += 1;
       mapLocationRequestIdRef.current += 1;
       if (mapLocationWatchIdRef.current !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(mapLocationWatchIdRef.current);
@@ -2917,6 +3191,9 @@ export default function Home() {
     setDestinationQuery("");
     setOrigin(null);
     setDestination(null);
+    committedRouteRef.current = null;
+    endpointMoveRequestIdRef.current.origin += 1;
+    endpointMoveRequestIdRef.current.destination += 1;
     setCommittedRoute(null);
     setRouteProgressSessionId((sessionId) => sessionId + 1);
     setMapFocusRequest(null);
@@ -3577,6 +3854,8 @@ export default function Home() {
               onFocusNextTarget={focusNextRouteTarget}
               onFocusMarker={focusMapCoordinates}
               onMapDragStart={minimizeMobileDetailsFromMapDrag}
+              onEndpointDragStart={prepareRouteEndpointDrag}
+              onEndpointMove={moveRouteEndpoint}
             />
           ) : (
             <div className="map-empty-state">

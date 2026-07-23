@@ -590,7 +590,10 @@ test("uses full start and destination labels on both map providers", async () =>
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.equal((pageSource.match(/"출발", "origin-marker"/g) ?? []).length, 2);
+  assert.equal(
+    (pageSource.match(/"출발",\s*"origin-marker"/g) ?? []).length,
+    2,
+  );
   assert.equal(
     (pageSource.match(/"도착",\s*"destination-marker"/g) ?? []).length,
     2,
@@ -647,13 +650,14 @@ test("focuses and zooms the map when a route pin is activated", async () => {
   );
   assert.match(
     leafletSource,
-    /\.on\("click", \(\) => onFocusMarker\(coordinates\)\)/,
+    /\.on\("click", \(\) => \{[\s\S]*?routeMarker\.getLatLng\(\);[\s\S]*?onFocusMarker\(\[position\.lat, position\.lng\]\);/,
   );
   assert.match(leafletSource, /keyboard:\s*true/);
   assert.match(
     leafletSource,
-    /title:\s*`\$\{tooltip\} 지도 핀으로 이동`/,
+    /`\$\{tooltip\} 핀\. 드래그해서 위치 변경`/,
   );
+  assert.match(leafletSource, /`\$\{tooltip\} 지도 핀으로 이동`/);
   assert.match(
     leafletSource,
     /mapRef\.current\.flyTo\(\s*focusRequest\.coordinates,\s*ROUTE_FOCUS_LEAFLET_ZOOM/,
@@ -667,6 +671,10 @@ test("focuses and zooms the map when a route pin is activated", async () => {
   assert.match(
     kakaoSource,
     /wrapper\.addEventListener\("click", \(event\) => \{[\s\S]*?event\.stopPropagation\(\);[\s\S]*?onFocusMarker\(coordinates\);/,
+  );
+  assert.match(
+    kakaoSource,
+    /sdk\.maps\.event\.addListener\(marker, "click", \(\) => \{[\s\S]*?marker\.getPosition\(\);[\s\S]*?onFocusMarker\(\[position\.getLat\(\), position\.getLng\(\)\]\);/,
   );
   assert.match(
     kakaoSource,
@@ -685,6 +693,53 @@ test("focuses and zooms the map when a route pin is activated", async () => {
     /\.kakao-route-marker\s*\{[^}]*pointer-events:\s*none/s,
   );
   assert.match(styles, /\.route-marker-wrapper:focus-visible\s*\{/);
+});
+
+test("drags only the start and destination pins and recommits the route", async () => {
+  const [pageSource, kakaoSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const leafletMapSource = pageSource.slice(
+    pageSource.indexOf("function LeafletRouteMap"),
+    pageSource.indexOf("function KakaoRouteMap"),
+  );
+  const kakaoMapSource = pageSource.slice(
+    pageSource.indexOf("function KakaoRouteMap"),
+    pageSource.indexOf("function RouteMap("),
+  );
+
+  assert.match(leafletMapSource, /draggable:\s*Boolean\(endpoint\)/);
+  assert.match(leafletMapSource, /autoPan:\s*Boolean\(endpoint\)/);
+  assert.match(leafletMapSource, /\.on\("dragstart", onEndpointDragStart\)/);
+  assert.match(leafletMapSource, /\.on\("dragend", \(\) => \{/);
+  assert.match(leafletMapSource, /onEndpointMove\(endpoint,/);
+  assert.match(kakaoMapSource, /new sdk\.maps\.Marker\(\{/);
+  assert.match(kakaoMapSource, /draggable:\s*true/);
+  assert.match(
+    kakaoMapSource,
+    /sdk\.maps\.event\.addListener\(marker, "dragstart", onEndpointDragStart\)/,
+  );
+  assert.match(
+    kakaoMapSource,
+    /sdk\.maps\.event\.addListener\(marker, "dragend", \(\) => \{/,
+  );
+  assert.equal(
+    (pageSource.match(/plan\.origin\.name,\s*"origin"/g) ?? []).length,
+    2,
+  );
+  assert.equal(
+    (pageSource.match(/plan\.destination\.name,\s*"destination"/g) ?? [])
+      .length,
+    2,
+  );
+  assert.match(pageSource, /reverseGeocodeKakao\(coordinates\)/);
+  assert.match(pageSource, /createDraggedRoutePlace\(/);
+  assert.match(pageSource, /remember:\s*false/);
+  assert.match(pageSource, /expandMobileDetails:\s*false/);
+  assert.match(kakaoSource, /coord2Address\(longitude, latitude/);
+  assert.match(styles, /\.leaflet-marker-draggable\s*\{[^}]*cursor:\s*grab/s);
 });
 
 test("focuses the map when each route timeline place is selected", async () => {

@@ -1486,6 +1486,15 @@ input:focus-visible {
   --route-marker-color: var(--coral);
 }
 
+.leaflet-marker-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.leaflet-marker-draggable.leaflet-drag-target {
+  cursor: grabbing;
+}
+
 .kakao-route-marker {
   padding: 0;
   border: 0;
