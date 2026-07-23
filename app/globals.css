@@ -2040,6 +2040,10 @@ input:focus-visible {
     transition: height 240ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
+  .workspace.has-route.is-map-drag-resizing .map-panel {
+    transition: none;
+  }
+
   .workspace.has-route.is-mobile-details-minimized .route-panel {
     height: 44px;
     flex: 0 0 44px;

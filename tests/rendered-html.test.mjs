@@ -981,21 +981,57 @@ test("minimizes mobile details on map drag without animating the handle", async 
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(pageSource, /map\.on\("dragstart", onMapDragStart\)/);
-  assert.match(pageSource, /map\.off\("dragstart", onMapDragStart\)/);
   assert.match(
     pageSource,
-    /sdk\.maps\.event\.addListener\(map, "dragstart", onMapDragStart\)/,
+    /map\.on\("dragstart", handleNativeMapDragStart\)/,
   );
   assert.match(
     pageSource,
-    /sdk\.maps\.event\.removeListener\(map, "dragstart", onMapDragStart\)/,
+    /map\.off\("dragstart", handleNativeMapDragStart\)/,
   );
-  assert.match(pageSource, /onMapDragStart=\{minimizeMobileDetailsFromMapDrag\}/);
+  assert.match(
+    pageSource,
+    /sdk\.maps\.event\.addListener\(\s*map,\s*"dragstart",\s*handleNativeMapDragStart,?\s*\)/,
+  );
+  assert.match(
+    pageSource,
+    /sdk\.maps\.event\.removeListener\(\s*map,\s*"dragstart",\s*handleNativeMapDragStart,\s*\)/,
+  );
+  assert.ok(
+    (
+      pageSource.match(
+        /runHeadingAwareMapDragStart\(nodeRef\.current, onMapDragStart\)/g,
+      ) ?? []
+    ).length >= 2,
+  );
+  assert.match(pageSource, /onMapDragStart=\{handleMapDragStart\}/);
   assert.match(
     pageSource,
     /minimizeMobileDetailsFromMapDrag[\s\S]*?max-width: 900px[\s\S]*?pendingResultFocusRef\.current = false[\s\S]*?setMobileDetailsMinimized\(true\)/,
   );
+  assert.match(pageSource, /setInstantMobileMapResize\(true\)/);
+  assert.match(pageSource, /setInstantMobileMapResize\(false\)/);
+  assert.match(pageSource, /is-map-drag-resizing/);
+  assert.match(
+    styles,
+    /\.workspace\.has-route\.is-map-drag-resizing \.map-panel\s*\{[^}]*transition:\s*none/s,
+  );
+  const mapDragHandler =
+    pageSource.match(
+      /const handleMapDragStart = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/,
+    )?.[1] ?? "";
+  assert.match(mapDragHandler, /minimizeMobileDetailsFromMapDrag\(\)/);
+  assert.match(mapDragHandler, /mapLocationMode !== "heading"/);
+  assert.match(mapDragHandler, /teardownMapOrientation\(\)/);
+  assert.match(mapDragHandler, /setMapLocationMode\("tracking"\)/);
+  assert.match(mapDragHandler, /setMapHeadingStatus\("idle"\)/);
+  assert.match(mapDragHandler, /setMapDeviceHeading\(null\)/);
+  assert.doesNotMatch(mapDragHandler, /stopMapLocationTracking/);
+  assert.doesNotMatch(mapDragHandler, /setMapUserLocation/);
+  assert.match(pageSource, /node\.style\.transition = "none"/);
+  assert.match(pageSource, /flushSync\(onMapDragStart\)/);
+  assert.match(pageSource, /node\.style\.removeProperty\("transition"\)/);
+  assert.match(pageSource, /useLayoutEffect\(\(\) => \{/);
   assert.match(kakaoSource, /event:\s*\{[\s\S]*?addListener[\s\S]*?removeListener/);
   assert.doesNotMatch(styles, /\.mobile-details-toggle:hover \.mobile-details-grip/);
   assert.doesNotMatch(
@@ -1007,7 +1043,7 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.match(gripRule, /width:\s*42px/);
   assert.match(gripRule, /background:\s*#b9c3bd/);
   assert.doesNotMatch(gripRule, /transition:|transform:|var\(--green\)/);
-  assert.match(pageSource, /new ResizeObserver\(applyLayout\)/);
+  assert.match(pageSource, /new ResizeObserver\(scheduleLayout\)/);
 });
 
 test("keeps the mobile heading-up camera centered through map relayout", async () => {

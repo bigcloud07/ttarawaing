@@ -21,10 +21,12 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
@@ -641,6 +643,24 @@ function updateCurrentLocationHeading(
   }
 }
 
+function runHeadingAwareMapDragStart(
+  node: HTMLElement | null,
+  onMapDragStart: () => void,
+) {
+  if (node?.dataset.headingUp !== "true") {
+    onMapDragStart();
+    return;
+  }
+
+  node.style.transition = "none";
+  flushSync(onMapDragStart);
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      node.style.removeProperty("transition");
+    });
+  });
+}
+
 function useHeadingUpMapCanvas({
   nodeRef,
   enabled,
@@ -657,7 +677,7 @@ function useHeadingUpMapCanvas({
   const continuousHeadingRef = useRef<number | null>(null);
   const headingUp = enabled && Number.isFinite(heading);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = nodeRef.current;
     if (!node) return;
 
@@ -682,44 +702,45 @@ function useHeadingUpMapCanvas({
     node.style.transform = `rotate(${-continuousHeading}deg)`;
   }, [heading, headingUp, nodeRef]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = nodeRef.current;
     const viewport = node?.parentElement;
     if (!ready || !node || !viewport) return;
 
     let animationFrame = 0;
     const applyLayout = () => {
-      window.cancelAnimationFrame(animationFrame);
-      animationFrame = window.requestAnimationFrame(() => {
-        if (headingUp) {
-          const side = getRotatingMapCanvasSide(
-            viewport.clientWidth,
-            viewport.clientHeight,
-          );
-          if (side > 0) {
-            node.style.inset = "auto";
-            node.style.left = "50%";
-            node.style.top = "50%";
-            node.style.width = `${side}px`;
-            node.style.height = `${side}px`;
-            node.style.marginLeft = `${-side / 2}px`;
-            node.style.marginTop = `${-side / 2}px`;
-          }
-        } else {
-          node.style.inset = "0";
-          node.style.removeProperty("left");
-          node.style.removeProperty("top");
-          node.style.removeProperty("width");
-          node.style.removeProperty("height");
-          node.style.removeProperty("margin-left");
-          node.style.removeProperty("margin-top");
+      if (headingUp) {
+        const side = getRotatingMapCanvasSide(
+          viewport.clientWidth,
+          viewport.clientHeight,
+        );
+        if (side > 0) {
+          node.style.inset = "auto";
+          node.style.left = "50%";
+          node.style.top = "50%";
+          node.style.width = `${side}px`;
+          node.style.height = `${side}px`;
+          node.style.marginLeft = `${-side / 2}px`;
+          node.style.marginTop = `${-side / 2}px`;
         }
-        onRelayout();
-      });
+      } else {
+        node.style.inset = "0";
+        node.style.removeProperty("left");
+        node.style.removeProperty("top");
+        node.style.removeProperty("width");
+        node.style.removeProperty("height");
+        node.style.removeProperty("margin-left");
+        node.style.removeProperty("margin-top");
+      }
+      onRelayout();
+    };
+    const scheduleLayout = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(applyLayout);
     };
 
     applyLayout();
-    const resizeObserver = new ResizeObserver(applyLayout);
+    const resizeObserver = new ResizeObserver(scheduleLayout);
     resizeObserver.observe(viewport);
     return () => {
       resizeObserver.disconnect();
@@ -1256,9 +1277,12 @@ function LeafletRouteMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
-    map.on("dragstart", onMapDragStart);
+    const handleNativeMapDragStart = () => {
+      runHeadingAwareMapDragStart(nodeRef.current, onMapDragStart);
+    };
+    map.on("dragstart", handleNativeMapDragStart);
     return () => {
-      map.off("dragstart", onMapDragStart);
+      map.off("dragstart", handleNativeMapDragStart);
     };
   }, [onMapDragStart, ready]);
 
@@ -1721,9 +1745,16 @@ function KakaoRouteMap({
     const map = mapRef.current;
     const sdk = sdkRef.current;
     if (!ready || !map || !sdk) return;
-    sdk.maps.event.addListener(map, "dragstart", onMapDragStart);
+    const handleNativeMapDragStart = () => {
+      runHeadingAwareMapDragStart(nodeRef.current, onMapDragStart);
+    };
+    sdk.maps.event.addListener(map, "dragstart", handleNativeMapDragStart);
     return () => {
-      sdk.maps.event.removeListener(map, "dragstart", onMapDragStart);
+      sdk.maps.event.removeListener(
+        map,
+        "dragstart",
+        handleNativeMapDragStart,
+      );
     };
   }, [onMapDragStart, ready]);
 
@@ -2449,6 +2480,8 @@ export default function Home() {
   const pendingResultFocusRef = useRef(false);
   const [resultFocusRequestId, setResultFocusRequestId] = useState(0);
   const [mobileDetailsMinimized, setMobileDetailsMinimized] = useState(false);
+  const [instantMobileMapResize, setInstantMobileMapResize] = useState(false);
+  const mobileMapResizeFrameRef = useRef<number | null>(null);
   const mobileDetailsDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -2478,6 +2511,9 @@ export default function Home() {
     () => () => {
       if (noticeTimerRef.current !== null) {
         window.clearTimeout(noticeTimerRef.current);
+      }
+      if (mobileMapResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(mobileMapResizeFrameRef.current);
       }
       originLocationRequestGateRef.current.invalidate();
     },
@@ -2819,8 +2855,20 @@ export default function Home() {
   const minimizeMobileDetailsFromMapDrag = useCallback(() => {
     if (!window.matchMedia("(max-width: 900px)").matches) return;
     pendingResultFocusRef.current = false;
+    if (!mobileDetailsMinimized) {
+      setInstantMobileMapResize(true);
+      if (mobileMapResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(mobileMapResizeFrameRef.current);
+      }
+      mobileMapResizeFrameRef.current = window.requestAnimationFrame(() => {
+        mobileMapResizeFrameRef.current = window.requestAnimationFrame(() => {
+          mobileMapResizeFrameRef.current = null;
+          setInstantMobileMapResize(false);
+        });
+      });
+    }
     setMobileDetailsMinimized(true);
-  }, []);
+  }, [mobileDetailsMinimized]);
 
   const selectOrigin = (place: Place) => {
     originLocationRequestGateRef.current.invalidate();
@@ -2913,6 +2961,19 @@ export default function Home() {
     },
     [teardownMapOrientation],
   );
+
+  const handleMapDragStart = useCallback(() => {
+    minimizeMobileDetailsFromMapDrag();
+    if (mapLocationMode !== "heading") return;
+    teardownMapOrientation();
+    setMapLocationMode("tracking");
+    setMapHeadingStatus("idle");
+    setMapDeviceHeading(null);
+  }, [
+    mapLocationMode,
+    minimizeMobileDetailsFromMapDrag,
+    teardownMapOrientation,
+  ]);
 
   const prepareRouteEndpointDrag = useCallback(() => {
     pendingResultFocusRef.current = false;
@@ -3341,7 +3402,7 @@ export default function Home() {
       <div
         className={`workspace${plan ? " has-route" : ""}${
           plan && mobileDetailsMinimized ? " is-mobile-details-minimized" : ""
-        }`}
+        }${plan && instantMobileMapResize ? " is-map-drag-resizing" : ""}`}
         id="top"
       >
         <aside className="route-panel">
@@ -3935,7 +3996,7 @@ export default function Home() {
               onLocate={locateMapUser}
               onFocusNextTarget={focusNextRouteTarget}
               onFocusMarker={focusMapCoordinates}
-              onMapDragStart={minimizeMobileDetailsFromMapDrag}
+              onMapDragStart={handleMapDragStart}
               onEndpointDragStart={prepareRouteEndpointDrag}
               onEndpointMove={moveRouteEndpoint}
             />
