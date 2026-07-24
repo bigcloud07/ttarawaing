@@ -859,20 +859,20 @@ input:focus-visible {
       var(--mode-walk-color) 0 3.4px,
       transparent 3.6px
     )
-    0 0 / 18px 7px repeat-x,
+    0 0 / 16px 7px repeat-x,
     linear-gradient(
       90deg,
       transparent 0 3.5px,
       var(--mode-walk-color) 3.5px 8.5px,
       transparent 8.5px
     )
-    0 0 / 18px 7px repeat-x,
+    0 0 / 16px 7px repeat-x,
     radial-gradient(
       circle at 8.5px 50%,
       var(--mode-walk-color) 0 3.4px,
       transparent 3.6px
     )
-    0 0 / 18px 7px repeat-x;
+    0 0 / 16px 7px repeat-x;
 }
 
 .mode-bike {

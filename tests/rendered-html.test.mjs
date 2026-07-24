@@ -1206,7 +1206,7 @@ test("centers each route time label under its proportional segment", async () =>
   assert.match(walkCapsuleRule, /circle at 3\.5px 50%/);
   assert.match(walkCapsuleRule, /circle at 8\.5px 50%/);
   assert.match(walkCapsuleRule, /linear-gradient/);
-  assert.match(walkCapsuleRule, /18px 7px repeat-x/);
+  assert.match(walkCapsuleRule, /16px 7px repeat-x/);
   assert.match(walkCapsuleRule, /var\(--mode-walk-color\)/);
   assert.doesNotMatch(walkCapsuleRule, /repeating-linear-gradient/);
   assert.match(bikeBarRule, /radial-gradient/);
