@@ -1313,13 +1313,17 @@ test("serves the Kakao JavaScript key from the runtime binding", async () => {
 
 test("normalizes the official Seoul Bike realtime station response", async () => {
   const originalFetch = globalThis.fetch;
+  let calls = 0;
   globalThis.fetch = async (input, init) => {
+    calls += 1;
     assert.equal(
       String(input),
       "https://www.bikeseoul.com/app/station/getStationRealtimeStatus.do",
     );
     assert.equal(init?.method, "POST");
     assert.match(String(init?.body), /stationGrpSeq=ALL/);
+
+    if (calls === 1) throw new TypeError("fetch failed");
 
     return Response.json({
       realtimeList: Array.from({ length: 2_701 }, (_, index) => ({
@@ -1349,6 +1353,7 @@ test("normalizes the official Seoul Bike realtime station response", async () =>
     assert.equal(payload.stations.length, 2_701);
     assert.deepEqual(payload.stations[0], { id: "1", availableBikes: 4 });
     assert.match(response.headers.get("cache-control") ?? "", /max-age=20/);
+    assert.equal(calls, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }

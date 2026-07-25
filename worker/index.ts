@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { requestBikeSeoulRealtime } from "../app/bike-seoul-realtime-server";
 
 interface Env {
   ASSETS: Fetcher;
@@ -21,9 +22,6 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
-const BIKE_SEOUL_REALTIME_URL =
-  "https://www.bikeseoul.com/app/station/getStationRealtimeStatus.do";
-const BIKE_SEOUL_REALTIME_TIMEOUT_MS = 10_000;
 const KAKAO_ROUTE_ORIGIN = "https://dapi.kakao.com";
 const KAKAO_ROUTE_TIMEOUT_MS = 10_000;
 const KAKAO_ROUTE_MAX_WAYPOINTS = 5;
@@ -454,38 +452,10 @@ const worker = {
       }
 
       try {
-        const controller = new AbortController();
-        const abortFromClient = () => controller.abort(request.signal.reason);
-        request.signal.addEventListener("abort", abortFromClient, { once: true });
-        const timeoutId = setTimeout(
-          () =>
-            controller.abort(
-              new DOMException("Bike Seoul request timed out.", "TimeoutError"),
-            ),
-          BIKE_SEOUL_REALTIME_TIMEOUT_MS,
-        );
-        let upstream: Response;
-        let payload: Record<string, unknown>;
-        try {
-          upstream = await fetch(BIKE_SEOUL_REALTIME_URL, {
-            method: "POST",
-            headers: {
-              Accept: "application/json",
-              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-              Referer: "https://www.bikeseoul.com/app/station/moveStationRealtimeStatus.do",
-            },
-            body: new URLSearchParams({ stationGrpSeq: "ALL" }),
-            signal: controller.signal,
-          });
-
-          if (!upstream.ok) {
-            throw new Error(`Bike Seoul returned ${upstream.status}.`);
-          }
-          payload = (await upstream.json()) as Record<string, unknown>;
-        } finally {
-          clearTimeout(timeoutId);
-          request.signal.removeEventListener("abort", abortFromClient);
-        }
+        const upstream = await requestBikeSeoulRealtime({
+          signal: request.signal,
+        });
+        const payload = (await upstream.json()) as Record<string, unknown>;
 
         const rawStations = Array.isArray(payload.realtimeList)
           ? payload.realtimeList

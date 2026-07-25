@@ -1,9 +1,7 @@
+import { requestBikeSeoulRealtime } from "../../../bike-seoul-realtime-server";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const REALTIME_URL =
-  "https://www.bikeseoul.com/app/station/getStationRealtimeStatus.do";
-const TIMEOUT_MS = 10_000;
 
 function getBikeCount(value: unknown) {
   const parsed = Number(value);
@@ -29,33 +27,15 @@ function parseStation(value: unknown) {
 }
 
 export async function GET(request: Request) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () =>
-      controller.abort(
-        new DOMException("Bike Seoul request timed out.", "TimeoutError"),
-      ),
-    TIMEOUT_MS,
-  );
-
   try {
-    const upstream = await fetch(REALTIME_URL, {
-      method: "POST",
+    const upstream = await requestBikeSeoulRealtime({
+      signal: request.signal,
       headers: {
-        Accept: "application/json",
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        Referer:
-          "https://www.bikeseoul.com/app/station/moveStationRealtimeStatus.do",
         "User-Agent":
           "Mozilla/5.0 (compatible; Ttarawaing/1.0; +https://ttarawaing.vercel.app)",
       },
-      body: new URLSearchParams({ stationGrpSeq: "ALL" }),
-      signal: controller.signal,
     });
 
-    if (!upstream.ok) {
-      throw new Error(`Bike Seoul returned ${upstream.status}.`);
-    }
     const payload = (await upstream.json()) as Record<string, unknown>;
     const rawStations = Array.isArray(payload.realtimeList)
       ? payload.realtimeList
@@ -92,7 +72,5 @@ export async function GET(request: Request) {
         },
       },
     );
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
