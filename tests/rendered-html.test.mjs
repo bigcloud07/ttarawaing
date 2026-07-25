@@ -114,6 +114,26 @@ test("stores and reopens recent route history on this device", async () => {
   assert.doesNotMatch(pageSource, /QUICK_ROUTES|chooseQuickRoute/);
 });
 
+test("shows the service introduction only before a route is committed", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(
+    pageSource,
+    /\{!plan \? \([\s\S]*?대여부터 반납까지 한 번에 알려드려요[\s\S]*?오늘은 어디로 가볼까요\?[\s\S]*?출발지와 도착지만 고르면 나머지는 맡겨주세요\.[\s\S]*?\) : null\}/,
+  );
+  assert.match(
+    pageSource,
+    /aria-label=\{plan \? "경로 검색 조건" : undefined\}/,
+  );
+  assert.match(
+    styles,
+    /\.workspace\.has-route \.route-form\s*\{[^}]*margin-top:\s*0/,
+  );
+});
+
 test("restores only the active tab route after refresh and clears it on home", async () => {
   const [pageSource, sessionSource] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

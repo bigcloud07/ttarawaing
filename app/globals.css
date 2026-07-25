@@ -185,6 +185,10 @@ input:focus-visible {
   margin-top: 24px;
 }
 
+.workspace.has-route .route-form {
+  margin-top: 0;
+}
+
 .route-rail {
   position: relative;
   display: flex;

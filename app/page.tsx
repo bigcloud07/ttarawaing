@@ -3582,16 +3582,24 @@ export default function Home() {
             </button>
           ) : null}
           <div className="panel-scroll" id="route-details-content">
-            <section className="search-section" aria-labelledby="route-search-title">
-              <div className="section-kicker">
-                대여부터 반납까지 한 번에 알려드려요
-              </div>
-              <div className="title-row">
-                <div>
-                  <h1 id="route-search-title">오늘은 어디로 가볼까요?</h1>
-                  <p>출발지와 도착지만 고르면 나머지는 맡겨주세요.</p>
-                </div>
-              </div>
+            <section
+              className="search-section"
+              aria-label={plan ? "경로 검색 조건" : undefined}
+              aria-labelledby={plan ? undefined : "route-search-title"}
+            >
+              {!plan ? (
+                <>
+                  <div className="section-kicker">
+                    대여부터 반납까지 한 번에 알려드려요
+                  </div>
+                  <div className="title-row">
+                    <div>
+                      <h1 id="route-search-title">오늘은 어디로 가볼까요?</h1>
+                      <p>출발지와 도착지만 고르면 나머지는 맡겨주세요.</p>
+                    </div>
+                  </div>
+                </>
+              ) : null}
 
               <div className="route-form">
                 <div className="route-rail" aria-hidden="true">
