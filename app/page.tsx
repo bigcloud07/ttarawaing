@@ -70,6 +70,11 @@ import {
   calculateRouteGeometryMetrics,
   recommendPassTransferRoute,
 } from "./pass-route-recommendation";
+import {
+  clearActiveRouteSession,
+  readActiveRouteSession,
+  writeActiveRouteSession,
+} from "./active-route-session";
 import { fetchRealtimeBikeAvailability } from "./realtime-bikes";
 import { readStoredValue, writeStoredValue } from "./safe-storage";
 import {
@@ -2643,6 +2648,23 @@ export default function Home() {
       if (storedBikeRoadPriority === "true" || storedBikeRoadPriority === "false") {
         setPreferBikeRoads(storedBikeRoadPriority === "true");
       }
+
+      const activeRoute = readActiveRouteSession(window.sessionStorage);
+      if (activeRoute) {
+        const restoredRoute = {
+          origin: activeRoute.origin,
+          destination: activeRoute.destination,
+        };
+        setOrigin(restoredRoute.origin);
+        setDestination(restoredRoute.destination);
+        setOriginQuery(restoredRoute.origin.name);
+        setDestinationQuery(restoredRoute.destination.name);
+        committedRouteRef.current = restoredRoute;
+        setCommittedRoute(restoredRoute);
+        setPassType(activeRoute.passType);
+        setPreferBikeRoads(activeRoute.preferBikeRoads);
+        setSelectedEndStationId(activeRoute.selectedEndStationId);
+      }
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
@@ -2766,8 +2788,17 @@ export default function Home() {
       setRouteProgressSessionId((sessionId) => sessionId + 1);
       setPassType(nextPassType);
       writeStoredValue(window.localStorage, PASS_TYPE_STORAGE_KEY, nextPassType);
+      if (committedRouteRef.current) {
+        writeActiveRouteSession(window.sessionStorage, {
+          version: 1,
+          ...committedRouteRef.current,
+          passType: nextPassType,
+          preferBikeRoads,
+          selectedEndStationId,
+        });
+      }
     },
-    [passType],
+    [passType, preferBikeRoads, selectedEndStationId],
   );
 
   const chooseBikeRoadPriority = useCallback((enabled: boolean) => {
@@ -2778,7 +2809,16 @@ export default function Home() {
       BIKE_ROAD_PRIORITY_STORAGE_KEY,
       String(enabled),
     );
-  }, []);
+    if (committedRouteRef.current) {
+      writeActiveRouteSession(window.sessionStorage, {
+        version: 1,
+        ...committedRouteRef.current,
+        passType,
+        preferBikeRoads: enabled,
+        selectedEndStationId,
+      });
+    }
+  }, [passType, selectedEndStationId]);
 
   const rememberRoute = useCallback((route: RouteHistoryItem) => {
     if (
@@ -2832,6 +2872,12 @@ export default function Home() {
         origin: resolvedOrigin,
         destination: resolvedDestination,
       };
+      writeActiveRouteSession(window.sessionStorage, {
+        version: 1,
+        ...nextRoute,
+        passType,
+        preferBikeRoads,
+      });
       committedRouteRef.current = nextRoute;
       setCommittedRoute(nextRoute);
       setRouteProgressSessionId((sessionId) => sessionId + 1);
@@ -2849,7 +2895,7 @@ export default function Home() {
       setErrorMessage("");
       originLocationRequestGateRef.current.invalidate();
       return true;
-    }, [destination, origin, rememberRoute],
+    }, [destination, origin, passType, preferBikeRoads, rememberRoute],
   );
 
   const findRoute = useCallback(() => {
@@ -3432,6 +3478,7 @@ export default function Home() {
   const resetRoute = (focusOrigin = true) => {
     originLocationRequestGateRef.current.invalidate();
     pendingResultFocusRef.current = false;
+    clearActiveRouteSession(window.sessionStorage);
     setMobileDetailsMinimized(false);
     stopMapLocationTracking(true);
     setOriginQuery("");
@@ -4017,6 +4064,18 @@ export default function Home() {
                                 );
                                 setMapFocusRequest(null);
                                 setSelectedEndStationId(station.id);
+                                if (committedRouteRef.current) {
+                                  writeActiveRouteSession(
+                                    window.sessionStorage,
+                                    {
+                                      version: 1,
+                                      ...committedRouteRef.current,
+                                      passType,
+                                      preferBikeRoads,
+                                      selectedEndStationId: station.id,
+                                    },
+                                  );
+                                }
                               }}
                             >
                               <span>

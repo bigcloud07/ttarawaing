@@ -1,7 +1,8 @@
-export type StorageLike = Pick<Storage, "getItem" | "setItem">;
+export type ReadableStorageLike = Pick<Storage, "getItem">;
+export type WritableStorageLike = Pick<Storage, "setItem">;
 
 export function readStoredValue(
-  storage: StorageLike,
+  storage: ReadableStorageLike,
   key: string,
 ): string | null {
   try {
@@ -12,12 +13,24 @@ export function readStoredValue(
 }
 
 export function writeStoredValue(
-  storage: StorageLike,
+  storage: WritableStorageLike,
   key: string,
   value: string,
 ): boolean {
   try {
     storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function removeStoredValue(
+  storage: Pick<Storage, "removeItem">,
+  key: string,
+): boolean {
+  try {
+    storage.removeItem(key);
     return true;
   } catch {
     return false;

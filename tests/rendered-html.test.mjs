@@ -114,6 +114,58 @@ test("stores and reopens recent route history on this device", async () => {
   assert.doesNotMatch(pageSource, /QUICK_ROUTES|chooseQuickRoute/);
 });
 
+test("restores only the active tab route after refresh and clears it on home", async () => {
+  const [pageSource, sessionSource] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/active-route-session.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(pageSource, /readActiveRouteSession\(window\.sessionStorage\)/);
+  assert.match(pageSource, /setOrigin\(restoredRoute\.origin\)/);
+  assert.match(pageSource, /setDestination\(restoredRoute\.destination\)/);
+  assert.match(pageSource, /setOriginQuery\(restoredRoute\.origin\.name\)/);
+  assert.match(
+    pageSource,
+    /setDestinationQuery\(restoredRoute\.destination\.name\)/,
+  );
+  assert.match(pageSource, /committedRouteRef\.current = restoredRoute/);
+  assert.match(pageSource, /setCommittedRoute\(restoredRoute\)/);
+  assert.match(
+    pageSource,
+    /setSelectedEndStationId\(activeRoute\.selectedEndStationId\)/,
+  );
+  assert.match(pageSource, /setPassType\(activeRoute\.passType\)/);
+  assert.match(
+    pageSource,
+    /setPreferBikeRoads\(activeRoute\.preferBikeRoads\)/,
+  );
+  assert.match(
+    pageSource,
+    /writeActiveRouteSession\(window\.sessionStorage,[\s\S]*?\.\.\.nextRoute,[\s\S]*?passType,[\s\S]*?preferBikeRoads/,
+  );
+  assert.match(
+    pageSource,
+    /clearActiveRouteSession\(window\.sessionStorage\)/,
+  );
+  assert.match(
+    pageSource,
+    /const resetRoute = \(focusOrigin = true\) => \{[\s\S]*?clearActiveRouteSession\(window\.sessionStorage\)[\s\S]*?setCommittedRoute\(null\)/,
+  );
+  assert.match(
+    pageSource,
+    /selectedEndStationId: station\.id/,
+  );
+  assert.match(
+    sessionSource,
+    /ttarawaing-active-route-session-v1/,
+  );
+  assert.match(sessionSource, /session\.version !== 1/);
+  assert.doesNotMatch(
+    pageSource,
+    /readActiveRouteSession\(window\.localStorage\)/,
+  );
+});
+
 test("defaults to a remembered one, two, three-hour, or unlimited pass choice", async () => {
   const [pageSource, planningSource] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

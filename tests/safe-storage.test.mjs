@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   readStoredValue,
+  removeStoredValue,
   writeStoredValue,
 } from "../app/safe-storage.ts";
 
@@ -13,10 +14,14 @@ test("브라우저 저장소 읽기가 차단돼도 기본 화면을 계속 사�
     setItem() {
       throw new DOMException("Blocked", "SecurityError");
     },
+    removeItem() {
+      throw new DOMException("Blocked", "SecurityError");
+    },
   };
 
   assert.equal(readStoredValue(blockedStorage, "pass"), null);
   assert.equal(writeStoredValue(blockedStorage, "pass", "60"), false);
+  assert.equal(removeStoredValue(blockedStorage, "pass"), false);
 });
 
 test("사용 가능한 저장소는 이용권과 히스토리 값을 그대로 보존한다", () => {
@@ -28,8 +33,13 @@ test("사용 가능한 저장소는 이용권과 히스토리 값을 그대로 �
     setItem(key, value) {
       values.set(key, value);
     },
+    removeItem(key) {
+      values.delete(key);
+    },
   };
 
   assert.equal(writeStoredValue(storage, "pass", "180"), true);
   assert.equal(readStoredValue(storage, "pass"), "180");
+  assert.equal(removeStoredValue(storage, "pass"), true);
+  assert.equal(readStoredValue(storage, "pass"), null);
 });
