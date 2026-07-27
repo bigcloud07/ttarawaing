@@ -38,7 +38,20 @@ export type RouteGeometryLoadOptions = {
   signal?: AbortSignal;
 };
 
-type RouteProfile = "walk" | "bike";
+export type PointToPointRouteMode = "walk" | "bike";
+
+export type PointToPointRouteInput = {
+  mode: PointToPointRouteMode;
+  from: Coordinates;
+  to: Coordinates;
+  bikeRouteMode?: BikeRouteMode;
+};
+
+export type PointToPointRouteLoadOptions = {
+  signal?: AbortSignal;
+};
+
+type RouteProfile = PointToPointRouteMode;
 
 type KakaoRouteStep = {
   path?: {
@@ -167,14 +180,14 @@ export function createRouteGeometryKey(input: RouteGeometryInput) {
   ].join("|");
 }
 
-function createDirectSegment(
+export function createDirectRouteSegment(
   from: Coordinates,
   to: Coordinates,
-  profile: RouteProfile,
+  mode: PointToPointRouteMode,
 ): RouteSegment {
   const directDistance = distanceMeters(from, to);
   const metersPerSecond =
-    profile === "walk" ? FOOT_METERS_PER_SECOND : BIKE_METERS_PER_SECOND;
+    mode === "walk" ? FOOT_METERS_PER_SECOND : BIKE_METERS_PER_SECOND;
   return {
     path: [
       [from[0], from[1]],
@@ -188,7 +201,7 @@ function createDirectSegment(
 
 function createDirectBikeRoute(coordinates: Coordinates[]) {
   const legs = coordinates.slice(0, -1).map((from, index) =>
-    createDirectSegment(from, coordinates[index + 1], "bike"),
+    createDirectRouteSegment(from, coordinates[index + 1], "bike"),
   );
   return {
     segment: {
@@ -218,10 +231,14 @@ export function createDirectRouteGeometry(
 ): RouteGeometry {
   const directBikeRoute = createDirectBikeRoute(getBikeCoordinates(input));
   return {
-    walkTo: createDirectSegment(input.origin, input.startStation, "walk"),
+    walkTo: createDirectRouteSegment(
+      input.origin,
+      input.startStation,
+      "walk",
+    ),
     bike: directBikeRoute.segment,
     bikeLegs: directBikeRoute.legs,
-    walkFrom: createDirectSegment(
+    walkFrom: createDirectRouteSegment(
       input.endStation,
       input.destination,
       "walk",
@@ -622,6 +639,34 @@ function recoverSegment<T>(
     if (isAbortError(error) || signal?.aborted) throw createAbortError();
     return fallback;
   });
+}
+
+export async function loadPointToPointRoute(
+  input: PointToPointRouteInput,
+  signalOrOptions?: AbortSignal | PointToPointRouteLoadOptions,
+): Promise<RouteSegment> {
+  const signal: AbortSignal | undefined =
+    signalOrOptions && "signal" in signalOrOptions
+      ? signalOrOptions.signal
+      : (signalOrOptions as AbortSignal | undefined);
+  throwIfAborted(signal);
+  if (!isCoordinates(input.from) || !isCoordinates(input.to)) {
+    throw new Error("Route coordinates are invalid.");
+  }
+
+  if (input.mode === "walk") {
+    return loadWalkSegment(input.from, input.to, signal);
+  }
+  if (input.mode !== "bike") {
+    throw new Error("Route mode must be walk or bike.");
+  }
+
+  const route = await loadBikeRoute(
+    [input.from, input.to],
+    input.bikeRouteMode ?? DEFAULT_BIKE_ROUTE_MODE,
+    signal,
+  );
+  return route.segment;
 }
 
 export async function loadRouteGeometry(

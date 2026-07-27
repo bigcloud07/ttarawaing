@@ -50,6 +50,7 @@ import {
 import {
   createDirectRouteGeometry,
   createRouteGeometryKey,
+  loadPointToPointRoute,
   loadRouteGeometry,
 } from "./route-geometry";
 import {
@@ -76,6 +77,14 @@ import {
   writeActiveRouteSession,
 } from "./active-route-session";
 import { fetchRealtimeBikeAvailability } from "./realtime-bikes";
+import {
+  findNearbyStation,
+  selectNearbyStationCandidates,
+} from "./nearby-station";
+import {
+  NearbyStationMap,
+  NearbyStationResultCard,
+} from "./nearby-station-map";
 import { readStoredValue, writeStoredValue } from "./safe-storage";
 import {
   createLatestRequestGate,
@@ -113,10 +122,15 @@ import type {
   Coordinates,
   RouteGeometry,
   RouteGeometryInput,
+  RouteSegment,
 } from "./route-geometry";
 import type { PlannedRouteLeg, RouteLocationFix } from "./route-progress";
 import type { PassType } from "./pass-planning";
 import type { PassRouteStatus } from "./pass-route-recommendation";
+import type {
+  NearbyAvailabilityStatus,
+  NearbyStationKind,
+} from "./nearby-station";
 
 type Place = {
   id: string;
@@ -180,6 +194,22 @@ type MapFocusRequest = {
   requestId: number;
 };
 
+type NearbyStationDisplayResult = {
+  kind: NearbyStationKind;
+  userCoordinates: Coordinates;
+  station: Station;
+  segment: RouteSegment;
+  availability: NearbyAvailabilityStatus;
+  adjustedForAvailability: boolean;
+  warning?: string;
+};
+
+type NearbyStationLookupStatus =
+  | "idle"
+  | "locating"
+  | "checking-availability"
+  | "routing";
+
 type RouteEndpointMoveHandler = (
   endpoint: RouteEndpointKind,
   coordinates: Coordinates,
@@ -188,6 +218,7 @@ type RouteEndpointMoveHandler = (
 const ROUTE_FOCUS_LEAFLET_ZOOM = 18;
 const ROUTE_FOCUS_KAKAO_LEVEL = 2;
 const ROUTE_RECOMMENDATION_TIMEOUT_MS = 60_000;
+const NEARBY_AVAILABILITY_FRESH_MS = 30_000;
 
 const PLACES: Place[] = [
   {
@@ -1163,6 +1194,7 @@ function PlaceField({
 
 function RouteMapChrome({
   nextRouteLeg,
+  nearbyStationResult,
   ready,
   geometryStatus,
   locationStatus,
@@ -1170,8 +1202,11 @@ function RouteMapChrome({
   headingStatus,
   onLocate,
   onFocusNextTarget,
+  onCloseNearbyStation,
+  onRefocusNearbyStation,
 }: {
   nextRouteLeg: PlannedRouteLeg;
+  nearbyStationResult: NearbyStationDisplayResult | null;
   ready: boolean;
   geometryStatus: RouteGeometryStatus;
   locationStatus: MapLocationStatus;
@@ -1179,6 +1214,8 @@ function RouteMapChrome({
   headingStatus: MapHeadingStatus;
   onLocate: () => void;
   onFocusNextTarget: () => void;
+  onCloseNearbyStation: () => void;
+  onRefocusNearbyStation: () => void;
 }) {
   const locationControlBusy =
     locationStatus === "loading" || headingStatus === "requesting";
@@ -1259,26 +1296,41 @@ function RouteMapChrome({
           </div>
         </div>
       </div>
-      <button
-        className="map-station-card"
-        type="button"
-        aria-label={`지도에서 다음 지점 보기: ${nextRouteLeg.target.name}`}
-        onClick={onFocusNextTarget}
-      >
-        <div className="station-mini-icon">
-          <NextTargetIcon size={18} aria-hidden="true" />
-        </div>
-        <div>
-          <span>{nextTargetLabel}</span>
-          <strong>{nextRouteLeg.target.name}</strong>
-        </div>
-        <div className="station-distance">
-          <b>
-            {formatDistance(Math.round(nextRouteLeg.plannedDistanceMeters))}
-          </b>
-          <small>예상 구간 거리</small>
-        </div>
-      </button>
+      {nearbyStationResult ? (
+        <NearbyStationResultCard
+          kind={nearbyStationResult.kind}
+          station={nearbyStationResult.station}
+          segment={nearbyStationResult.segment}
+          availability={nearbyStationResult.availability}
+          adjustedForAvailability={
+            nearbyStationResult.adjustedForAvailability
+          }
+          warning={nearbyStationResult.warning}
+          onClose={onCloseNearbyStation}
+          onRefocus={onRefocusNearbyStation}
+        />
+      ) : (
+        <button
+          className="map-station-card"
+          type="button"
+          aria-label={`지도에서 다음 지점 보기: ${nextRouteLeg.target.name}`}
+          onClick={onFocusNextTarget}
+        >
+          <div className="station-mini-icon">
+            <NextTargetIcon size={18} aria-hidden="true" />
+          </div>
+          <div>
+            <span>{nextTargetLabel}</span>
+            <strong>{nextRouteLeg.target.name}</strong>
+          </div>
+          <div className="station-distance">
+            <b>
+              {formatDistance(Math.round(nextRouteLeg.plannedDistanceMeters))}
+            </b>
+            <small>예상 구간 거리</small>
+          </div>
+        </button>
+      )}
     </>
   );
 }
@@ -1290,6 +1342,8 @@ function LeafletRouteMap({
   geometryStatus,
   transferStops,
   focusRequest,
+  nearbyStationResult,
+  nearbyStationFocusRequestId,
   userLocation,
   userHeading,
   locationFocusRequestId,
@@ -1300,6 +1354,8 @@ function LeafletRouteMap({
   onLocate,
   onFocusNextTarget,
   onFocusMarker,
+  onCloseNearbyStation,
+  onRefocusNearbyStation,
   onMapDragStart,
   onMapTouchStart,
   onEndpointDragStart,
@@ -1311,6 +1367,8 @@ function LeafletRouteMap({
   geometryStatus: RouteGeometryStatus;
   transferStops: Station[];
   focusRequest: MapFocusRequest | null;
+  nearbyStationResult: NearbyStationDisplayResult | null;
+  nearbyStationFocusRequestId: number;
   userLocation: Coordinates | null;
   userHeading: number | null;
   locationFocusRequestId: number;
@@ -1321,6 +1379,8 @@ function LeafletRouteMap({
   onLocate: () => void;
   onFocusNextTarget: () => void;
   onFocusMarker: (coordinates: Coordinates) => void;
+  onCloseNearbyStation: () => void;
+  onRefocusNearbyStation: () => void;
   onMapDragStart: () => void;
   onMapTouchStart: () => void;
   onEndpointDragStart: () => void;
@@ -1329,12 +1389,16 @@ function LeafletRouteMap({
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const routeLayerRef = useRef<LayerGroup | null>(null);
+  const nearbyLayerRef = useRef<LayerGroup | null>(null);
+  const nearbyWasActiveRef = useRef(false);
   const locationLayerRef = useRef<LayerGroup | null>(null);
   const locationMarkerRef = useRef<LeafletMarker | null>(null);
   const locationMarkerElementRef = useRef<HTMLElement | null>(null);
   const hasLocatedRef = useRef(false);
   const userHeadingRef = useRef(userHeading);
   const focusRequestRef = useRef<MapFocusRequest | null>(focusRequest);
+  const nearbyStationResultRef =
+    useRef<NearbyStationDisplayResult | null>(nearbyStationResult);
   const [ready, setReady] = useState(false);
   const routeCameraKey = [
     plan.origin.id,
@@ -1369,6 +1433,10 @@ function LeafletRouteMap({
   }, [focusRequest]);
 
   useEffect(() => {
+    nearbyStationResultRef.current = nearbyStationResult;
+  }, [nearbyStationResult]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
     const handleNativeMapDragStart = () => {
@@ -1379,7 +1447,7 @@ function LeafletRouteMap({
     return () => {
       map.off("dragstart", handleNativeMapDragStart);
     };
-  }, [onMapDragStart, ready]);
+  }, [onMapDragStart, pinchActiveRef, ready]);
 
   useEffect(() => {
     let active = true;
@@ -1403,6 +1471,7 @@ function LeafletRouteMap({
 
     return () => {
       active = false;
+      nearbyLayerRef.current = null;
       locationLayerRef.current = null;
       locationMarkerRef.current = null;
       locationMarkerElementRef.current = null;
@@ -1421,6 +1490,7 @@ function LeafletRouteMap({
       if (!active || !mapRef.current) return;
       const L = leafletModule.default;
       if (geometryStatus === "loading") {
+        if (nearbyStationResultRef.current) return;
         const requestedFocus = focusRequestRef.current;
         if (requestedFocus) {
           mapRef.current.flyTo(
@@ -1594,6 +1664,9 @@ function LeafletRouteMap({
         plan.destination.coordinates,
       ]);
       const requestedFocus = focusRequestRef.current;
+      if (nearbyStationResultRef.current) {
+        return;
+      }
       if (requestedFocus) {
         mapRef.current.flyTo(
           requestedFocus.coordinates,
@@ -1624,7 +1697,118 @@ function LeafletRouteMap({
   ]);
 
   useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    nearbyLayerRef.current?.remove();
+    nearbyLayerRef.current = null;
+    let active = true;
+
+    void import("leaflet").then((leafletModule) => {
+      const map = mapRef.current;
+      if (!active || !map) return;
+      const L = leafletModule.default;
+
+      if (!nearbyStationResult) {
+        if (!nearbyWasActiveRef.current) return;
+        nearbyWasActiveRef.current = false;
+        const routeBounds = L.latLngBounds([
+          ...geometry.walkTo.path,
+          ...geometry.bike.path,
+          ...geometry.walkFrom.path,
+          plan.origin.coordinates,
+          plan.startStation.coordinates,
+          ...transferStops.map((station) => station.coordinates),
+          plan.endStation.coordinates,
+          plan.destination.coordinates,
+        ]);
+        map.fitBounds(routeBounds, {
+          paddingTopLeft: [80, 110],
+          paddingBottomRight: [90, 90],
+          maxZoom: 15,
+        });
+        return;
+      }
+
+      nearbyWasActiveRef.current = true;
+      const group = L.layerGroup().addTo(map);
+      nearbyLayerRef.current = group;
+      const isRental = nearbyStationResult.kind === "rental";
+      const path = nearbyStationResult.segment.path;
+      const isDirect = nearbyStationResult.segment.source === "direct";
+
+      if (isRental) {
+        L.polyline(path, {
+          color: "#3759c7",
+          weight: 5,
+          opacity: isDirect ? 0.52 : 0.9,
+          dashArray: "3 9",
+          lineCap: "round",
+        }).addTo(group);
+      } else {
+        L.polyline(path, {
+          color: "#00a77b",
+          weight: 7,
+          opacity: isDirect ? 0.58 : 0.92,
+          lineCap: "round",
+          lineJoin: "round",
+        }).addTo(group);
+        L.polyline(path, {
+          color: "#baf4df",
+          weight: 2,
+          opacity: isDirect ? 0.72 : 0.95,
+          dashArray: "1 10",
+          lineCap: "round",
+        }).addTo(group);
+      }
+
+      const markerLabel = isRental ? "대여" : "반납";
+      const markerClassName = isRental ? "bike-marker" : "return-marker";
+      L.marker(nearbyStationResult.station.coordinates, {
+        icon: L.divIcon({
+          className: `route-marker-wrapper ${markerClassName}-wrapper nearby-station-marker`,
+          html: `<span class="route-marker ${markerClassName}"><span class="route-marker-shape"><span class="route-marker-label">${markerLabel}</span></span></span>`,
+          iconSize: [60, 60],
+          iconAnchor: [30, 60],
+        }),
+        keyboard: true,
+        title: `${nearbyStationResult.station.name} ${markerLabel} 대여소`,
+      })
+        .bindTooltip(nearbyStationResult.station.name, {
+          direction: "top",
+          offset: [0, -54],
+        })
+        .on("click", onRefocusNearbyStation)
+        .addTo(group);
+
+      const bounds = L.latLngBounds([
+        nearbyStationResult.userCoordinates,
+        ...path,
+        nearbyStationResult.station.coordinates,
+      ]);
+      map.fitBounds(bounds, {
+        paddingTopLeft: [70, 90],
+        paddingBottomRight: [70, 190],
+        maxZoom: 17,
+      });
+    });
+
+    return () => {
+      active = false;
+      nearbyLayerRef.current?.remove();
+      nearbyLayerRef.current = null;
+    };
+  }, [
+    geometry,
+    nearbyStationFocusRequestId,
+    nearbyStationResult,
+    onRefocusNearbyStation,
+    plan,
+    ready,
+    transferStops,
+  ]);
+
+  useEffect(() => {
     if (!ready || !mapRef.current || !focusRequest) return;
+    if (nearbyStationResultRef.current) return;
     mapRef.current.flyTo(
       focusRequest.coordinates,
       ROUTE_FOCUS_LEAFLET_ZOOM,
@@ -1641,7 +1825,13 @@ function LeafletRouteMap({
       window.cancelAnimationFrame(animationFrame);
       animationFrame = window.requestAnimationFrame(() => {
         map.invalidateSize();
-        if (focusRequestRef.current || hasLocatedRef.current) return;
+        if (
+          focusRequestRef.current ||
+          hasLocatedRef.current ||
+          nearbyStationResultRef.current
+        ) {
+          return;
+        }
         void import("leaflet").then((leafletModule) => {
           if (!active || !mapRef.current) return;
           const bounds = leafletModule.default.latLngBounds([
@@ -1742,6 +1932,7 @@ function LeafletRouteMap({
       <div ref={nodeRef} className="map-canvas" aria-label="따라와잉 경로 지도" />
       <RouteMapChrome
         nextRouteLeg={nextRouteLeg}
+        nearbyStationResult={nearbyStationResult}
         ready={ready}
         geometryStatus={geometryStatus}
         locationStatus={locationStatus}
@@ -1749,6 +1940,8 @@ function LeafletRouteMap({
         headingStatus={headingStatus}
         onLocate={onLocate}
         onFocusNextTarget={onFocusNextTarget}
+        onCloseNearbyStation={onCloseNearbyStation}
+        onRefocusNearbyStation={onRefocusNearbyStation}
       />
     </div>
   );
@@ -1761,6 +1954,8 @@ function KakaoRouteMap({
   geometryStatus,
   transferStops,
   focusRequest,
+  nearbyStationResult,
+  nearbyStationFocusRequestId,
   userLocation,
   userHeading,
   locationFocusRequestId,
@@ -1771,6 +1966,8 @@ function KakaoRouteMap({
   onLocate,
   onFocusNextTarget,
   onFocusMarker,
+  onCloseNearbyStation,
+  onRefocusNearbyStation,
   onMapDragStart,
   onMapTouchStart,
   onEndpointDragStart,
@@ -1783,6 +1980,8 @@ function KakaoRouteMap({
   geometryStatus: RouteGeometryStatus;
   transferStops: Station[];
   focusRequest: MapFocusRequest | null;
+  nearbyStationResult: NearbyStationDisplayResult | null;
+  nearbyStationFocusRequestId: number;
   userLocation: Coordinates | null;
   userHeading: number | null;
   locationFocusRequestId: number;
@@ -1793,6 +1992,8 @@ function KakaoRouteMap({
   onLocate: () => void;
   onFocusNextTarget: () => void;
   onFocusMarker: (coordinates: Coordinates) => void;
+  onCloseNearbyStation: () => void;
+  onRefocusNearbyStation: () => void;
   onMapDragStart: () => void;
   onMapTouchStart: () => void;
   onEndpointDragStart: () => void;
@@ -1803,11 +2004,15 @@ function KakaoRouteMap({
   const mapRef = useRef<KakaoMap | null>(null);
   const sdkRef = useRef<KakaoSdk | null>(null);
   const mapObjectsRef = useRef<KakaoMapObject[]>([]);
+  const nearbyMapObjectsRef = useRef<KakaoMapObject[]>([]);
+  const nearbyWasActiveRef = useRef(false);
   const locationObjectRef = useRef<KakaoCustomOverlay | null>(null);
   const locationMarkerElementRef = useRef<HTMLElement | null>(null);
   const hasLocatedRef = useRef(false);
   const userHeadingRef = useRef(userHeading);
   const focusRequestRef = useRef<MapFocusRequest | null>(focusRequest);
+  const nearbyStationResultRef =
+    useRef<NearbyStationDisplayResult | null>(nearbyStationResult);
   const [ready, setReady] = useState(false);
   const routeCameraKey = [
     plan.origin.id,
@@ -1844,6 +2049,10 @@ function KakaoRouteMap({
   }, [focusRequest]);
 
   useEffect(() => {
+    nearbyStationResultRef.current = nearbyStationResult;
+  }, [nearbyStationResult]);
+
+  useEffect(() => {
     const map = mapRef.current;
     const sdk = sdkRef.current;
     if (!ready || !map || !sdk) return;
@@ -1859,11 +2068,16 @@ function KakaoRouteMap({
         handleNativeMapDragStart,
       );
     };
-  }, [onMapDragStart, ready]);
+  }, [onMapDragStart, pinchActiveRef, ready]);
 
   const clearMapObjects = useCallback(() => {
     mapObjectsRef.current.forEach((mapObject) => mapObject.setMap(null));
     mapObjectsRef.current = [];
+  }, []);
+
+  const clearNearbyMapObjects = useCallback(() => {
+    nearbyMapObjectsRef.current.forEach((mapObject) => mapObject.setMap(null));
+    nearbyMapObjectsRef.current = [];
   }, []);
 
   useEffect(() => {
@@ -1886,13 +2100,14 @@ function KakaoRouteMap({
     return () => {
       active = false;
       clearMapObjects();
+      clearNearbyMapObjects();
       locationObjectRef.current?.setMap(null);
       locationObjectRef.current = null;
       locationMarkerElementRef.current = null;
       mapRef.current = null;
       sdkRef.current = null;
     };
-  }, [clearMapObjects, onError]);
+  }, [clearMapObjects, clearNearbyMapObjects, onError]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1903,7 +2118,13 @@ function KakaoRouteMap({
       window.cancelAnimationFrame(animationFrame);
       animationFrame = window.requestAnimationFrame(() => {
         map.relayout();
-        if (focusRequestRef.current || hasLocatedRef.current) return;
+        if (
+          focusRequestRef.current ||
+          hasLocatedRef.current ||
+          nearbyStationResultRef.current
+        ) {
+          return;
+        }
         const bounds = new sdk.maps.LatLngBounds();
         [
           ...geometry.walkTo.path,
@@ -1947,6 +2168,7 @@ function KakaoRouteMap({
       ].forEach((coordinates) => bounds.extend(toLatLng(coordinates)));
       const animationFrame = window.requestAnimationFrame(() => {
         map.relayout();
+        if (nearbyStationResultRef.current) return;
         const requestedFocus = focusRequestRef.current;
         if (requestedFocus) {
           const position = toLatLng(requestedFocus.coordinates);
@@ -2272,6 +2494,7 @@ function KakaoRouteMap({
 
     const animationFrame = window.requestAnimationFrame(() => {
       map.relayout();
+      if (nearbyStationResultRef.current) return;
       const requestedFocus = focusRequestRef.current;
       if (requestedFocus) {
         const position = toLatLng(requestedFocus.coordinates);
@@ -2303,7 +2526,147 @@ function KakaoRouteMap({
   useEffect(() => {
     const sdk = sdkRef.current;
     const map = mapRef.current;
+    if (!ready || !sdk || !map) return;
+
+    clearNearbyMapObjects();
+    if (!nearbyStationResult) {
+      if (!nearbyWasActiveRef.current) return;
+      nearbyWasActiveRef.current = false;
+      const routeBounds = new sdk.maps.LatLngBounds();
+      [
+        ...geometry.walkTo.path,
+        ...geometry.bike.path,
+        ...geometry.walkFrom.path,
+        plan.origin.coordinates,
+        plan.startStation.coordinates,
+        ...transferStops.map((station) => station.coordinates),
+        plan.endStation.coordinates,
+        plan.destination.coordinates,
+      ].forEach(([latitude, longitude]) =>
+        routeBounds.extend(new sdk.maps.LatLng(latitude, longitude)),
+      );
+      map.setBounds(routeBounds, 110, 90, 90, 80);
+      return;
+    }
+
+    nearbyWasActiveRef.current = true;
+    const toLatLng = ([latitude, longitude]: Coordinates) =>
+      new sdk.maps.LatLng(latitude, longitude);
+    const isRental = nearbyStationResult.kind === "rental";
+    const isDirect = nearbyStationResult.segment.source === "direct";
+    const path = nearbyStationResult.segment.path;
+    const addNearbyPolyline = (
+      color: string,
+      weight: number,
+      style: string,
+      opacity: number,
+      zIndex: number,
+    ) => {
+      const polyline = new sdk.maps.Polyline({
+        map,
+        path: path.map(toLatLng),
+        strokeColor: color,
+        strokeWeight: weight,
+        strokeOpacity: opacity,
+        strokeStyle: style,
+        zIndex,
+      });
+      nearbyMapObjectsRef.current.push(polyline);
+    };
+
+    if (isRental) {
+      addNearbyPolyline(
+        "#3759c7",
+        5,
+        "shortdash",
+        isDirect ? 0.52 : 0.9,
+        7,
+      );
+    } else {
+      addNearbyPolyline(
+        "#00a77b",
+        7,
+        "solid",
+        isDirect ? 0.58 : 0.92,
+        7,
+      );
+      addNearbyPolyline(
+        "#baf4df",
+        2,
+        "shortdot",
+        isDirect ? 0.72 : 0.95,
+        8,
+      );
+    }
+
+    const markerLabel = isRental ? "대여" : "반납";
+    const markerClassName = isRental ? "bike-marker" : "return-marker";
+    const wrapper = document.createElement("button");
+    wrapper.type = "button";
+    wrapper.className = `route-marker-wrapper kakao-route-marker ${markerClassName}-wrapper nearby-station-marker`;
+    wrapper.title = nearbyStationResult.station.name;
+    wrapper.setAttribute(
+      "aria-label",
+      `${nearbyStationResult.station.name} ${markerLabel} 대여소까지의 경로 다시 보기`,
+    );
+    const marker = document.createElement("span");
+    marker.className = `route-marker ${markerClassName}`;
+    const markerShape = document.createElement("span");
+    markerShape.className = "route-marker-shape";
+    const markerText = document.createElement("span");
+    markerText.className = "route-marker-label";
+    markerText.textContent = markerLabel;
+    markerShape.appendChild(markerText);
+    marker.appendChild(markerShape);
+    wrapper.appendChild(marker);
+    const handleMarkerClick = (event: Event) => {
+      event.stopPropagation();
+      onRefocusNearbyStation();
+    };
+    wrapper.addEventListener("click", handleMarkerClick);
+    const stationOverlay = new sdk.maps.CustomOverlay({
+      map,
+      position: toLatLng(nearbyStationResult.station.coordinates),
+      content: wrapper,
+      clickable: true,
+      xAnchor: 0.5,
+      yAnchor: 1,
+      zIndex: 9,
+    });
+    nearbyMapObjectsRef.current.push(stationOverlay);
+
+    const bounds = new sdk.maps.LatLngBounds();
+    [
+      nearbyStationResult.userCoordinates,
+      ...path,
+      nearbyStationResult.station.coordinates,
+    ].forEach((coordinates) => bounds.extend(toLatLng(coordinates)));
+    const animationFrame = window.requestAnimationFrame(() => {
+      map.relayout();
+      map.setBounds(bounds, 90, 70, 190, 70);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      wrapper.removeEventListener("click", handleMarkerClick);
+      clearNearbyMapObjects();
+    };
+  }, [
+    clearNearbyMapObjects,
+    geometry,
+    nearbyStationFocusRequestId,
+    nearbyStationResult,
+    onRefocusNearbyStation,
+    plan,
+    ready,
+    transferStops,
+  ]);
+
+  useEffect(() => {
+    const sdk = sdkRef.current;
+    const map = mapRef.current;
     if (!ready || !sdk || !map || !focusRequest) return;
+    if (nearbyStationResultRef.current) return;
     const coordinates = focusRequest.coordinates;
     const position = new sdk.maps.LatLng(
       coordinates[0],
@@ -2379,6 +2742,7 @@ function KakaoRouteMap({
       />
       <RouteMapChrome
         nextRouteLeg={nextRouteLeg}
+        nearbyStationResult={nearbyStationResult}
         ready={ready}
         geometryStatus={geometryStatus}
         locationStatus={locationStatus}
@@ -2386,6 +2750,8 @@ function KakaoRouteMap({
         headingStatus={headingStatus}
         onLocate={onLocate}
         onFocusNextTarget={onFocusNextTarget}
+        onCloseNearbyStation={onCloseNearbyStation}
+        onRefocusNearbyStation={onRefocusNearbyStation}
       />
     </div>
   );
@@ -2398,6 +2764,8 @@ function RouteMap({
   geometryStatus,
   transferStops,
   focusRequest,
+  nearbyStationResult,
+  nearbyStationFocusRequestId,
   userLocation,
   userHeading,
   locationFocusRequestId,
@@ -2408,6 +2776,8 @@ function RouteMap({
   onLocate,
   onFocusNextTarget,
   onFocusMarker,
+  onCloseNearbyStation,
+  onRefocusNearbyStation,
   onMapDragStart,
   onMapTouchStart,
   onEndpointDragStart,
@@ -2419,6 +2789,8 @@ function RouteMap({
   geometryStatus: RouteGeometryStatus;
   transferStops: Station[];
   focusRequest: MapFocusRequest | null;
+  nearbyStationResult: NearbyStationDisplayResult | null;
+  nearbyStationFocusRequestId: number;
   userLocation: Coordinates | null;
   userHeading: number | null;
   locationFocusRequestId: number;
@@ -2429,6 +2801,8 @@ function RouteMap({
   onLocate: () => void;
   onFocusNextTarget: () => void;
   onFocusMarker: (coordinates: Coordinates) => void;
+  onCloseNearbyStation: () => void;
+  onRefocusNearbyStation: () => void;
   onMapDragStart: () => void;
   onMapTouchStart: () => void;
   onEndpointDragStart: () => void;
@@ -2460,6 +2834,8 @@ function RouteMap({
         geometryStatus={geometryStatus}
         transferStops={transferStops}
         focusRequest={focusRequest}
+        nearbyStationResult={nearbyStationResult}
+        nearbyStationFocusRequestId={nearbyStationFocusRequestId}
         userLocation={userLocation}
         userHeading={userHeading}
         locationFocusRequestId={locationFocusRequestId}
@@ -2470,6 +2846,8 @@ function RouteMap({
         onLocate={onLocate}
         onFocusNextTarget={onFocusNextTarget}
         onFocusMarker={onFocusMarker}
+        onCloseNearbyStation={onCloseNearbyStation}
+        onRefocusNearbyStation={onRefocusNearbyStation}
         onMapDragStart={onMapDragStart}
         onMapTouchStart={onMapTouchStart}
         onEndpointDragStart={onEndpointDragStart}
@@ -2487,6 +2865,8 @@ function RouteMap({
         geometryStatus={geometryStatus}
         transferStops={transferStops}
         focusRequest={focusRequest}
+        nearbyStationResult={nearbyStationResult}
+        nearbyStationFocusRequestId={nearbyStationFocusRequestId}
         userLocation={userLocation}
         userHeading={userHeading}
         locationFocusRequestId={locationFocusRequestId}
@@ -2497,6 +2877,8 @@ function RouteMap({
         onLocate={onLocate}
         onFocusNextTarget={onFocusNextTarget}
         onFocusMarker={onFocusMarker}
+        onCloseNearbyStation={onCloseNearbyStation}
+        onRefocusNearbyStation={onRefocusNearbyStation}
         onMapDragStart={onMapDragStart}
         onMapTouchStart={onMapTouchStart}
         onEndpointDragStart={onEndpointDragStart}
@@ -2510,6 +2892,7 @@ function RouteMap({
       <div className="map-canvas" aria-hidden="true" />
       <RouteMapChrome
         nextRouteLeg={nextRouteLeg}
+        nearbyStationResult={nearbyStationResult}
         ready={false}
         geometryStatus={geometryStatus}
         locationStatus={locationStatus}
@@ -2517,6 +2900,8 @@ function RouteMap({
         headingStatus={headingStatus}
         onLocate={onLocate}
         onFocusNextTarget={onFocusNextTarget}
+        onCloseNearbyStation={onCloseNearbyStation}
+        onRefocusNearbyStation={onRefocusNearbyStation}
       />
     </div>
   );
@@ -2547,6 +2932,17 @@ export default function Home() {
   const noticeTimerRef = useRef<number | null>(null);
   const completedRouteNoticeKeyRef = useRef<string | null>(null);
   const originLocationRequestGateRef = useRef(createLatestRequestGate());
+  const nearbyLocationRequestGateRef = useRef(createLatestRequestGate());
+  const nearbyLookupAbortControllerRef = useRef<AbortController | null>(null);
+  const [nearbyStationResult, setNearbyStationResult] =
+    useState<NearbyStationDisplayResult | null>(null);
+  const [nearbyStationLookupStatus, setNearbyStationLookupStatus] =
+    useState<NearbyStationLookupStatus>("idle");
+  const [nearbyStationLookupKind, setNearbyStationLookupKind] =
+    useState<NearbyStationKind | null>(null);
+  const [nearbyStationError, setNearbyStationError] = useState("");
+  const [nearbyStationFocusRequestId, setNearbyStationFocusRequestId] =
+    useState(0);
   const [mapFocusRequest, setMapFocusRequest] = useState<MapFocusRequest | null>(
     null,
   );
@@ -2569,7 +2965,9 @@ export default function Home() {
   const [mapLocationMode, setMapLocationMode] =
     useState<MapLocationMode>("idle");
   const mapLocationModeRef = useRef<MapLocationMode>("idle");
-  mapLocationModeRef.current = mapLocationMode;
+  useLayoutEffect(() => {
+    mapLocationModeRef.current = mapLocationMode;
+  }, [mapLocationMode]);
   const [mapLocationFocusRequestId, setMapLocationFocusRequestId] = useState(0);
   const mapHandledLocationFocusRequestIdRef = useRef(0);
   const [mapHeadingStatus, setMapHeadingStatus] =
@@ -2598,9 +2996,15 @@ export default function Home() {
   } | null>(null);
   const mobileDetailsIgnoreClickUntilRef = useRef(0);
   const [stations, setStations] = useState(STATIONS);
+  const stationsRef = useRef(stations);
+  const liveBikeUpdatedAtRef = useRef<number | null>(null);
   const [liveBikeStatus, setLiveBikeStatus] = useState<
     "loading" | "ready" | "unavailable"
   >("loading");
+
+  useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
 
   const showNotice = useCallback((message: string, durationMs?: number) => {
     if (noticeTimerRef.current !== null) {
@@ -2616,6 +3020,16 @@ export default function Home() {
     }
   }, []);
 
+  const cancelNearbyStationLookup = useCallback((clearResult = true) => {
+    nearbyLocationRequestGateRef.current.invalidate();
+    nearbyLookupAbortControllerRef.current?.abort();
+    nearbyLookupAbortControllerRef.current = null;
+    setNearbyStationLookupStatus("idle");
+    setNearbyStationLookupKind(null);
+    setNearbyStationError("");
+    if (clearResult) setNearbyStationResult(null);
+  }, []);
+
   useEffect(
     () => () => {
       if (noticeTimerRef.current !== null) {
@@ -2625,6 +3039,8 @@ export default function Home() {
         window.cancelAnimationFrame(mobileMapResizeFrameRef.current);
       }
       originLocationRequestGateRef.current.invalidate();
+      nearbyLocationRequestGateRef.current.invalidate();
+      nearbyLookupAbortControllerRef.current?.abort();
     },
     [],
   );
@@ -2670,28 +3086,40 @@ export default function Home() {
     return () => window.clearTimeout(timeoutId);
   }, []);
 
+  const fetchRealtimeStations = useCallback(async (signal: AbortSignal) => {
+    const realtimeAvailability = await fetchRealtimeBikeAvailability(signal);
+    const availabilityById = new Map<string, number>();
+    for (const station of realtimeAvailability) {
+      availabilityById.set(station.id, station.availableBikes);
+    }
+
+    const minimumRealtimeStationCount = Math.floor(STATIONS.length * 0.98);
+    if (availabilityById.size < minimumRealtimeStationCount) {
+      throw new Error("Realtime bike station data is incomplete.");
+    }
+
+    const updatedStations = STATIONS.map((station) => ({
+      ...station,
+      bikes: availabilityById.get(station.id) ?? null,
+    }));
+    return updatedStations;
+  }, []);
+
+  const applyRealtimeStations = useCallback((updatedStations: Station[]) => {
+    stationsRef.current = updatedStations;
+    liveBikeUpdatedAtRef.current = Date.now();
+    setStations(updatedStations);
+    setLiveBikeStatus("ready");
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
 
-    void fetchRealtimeBikeAvailability(controller.signal)
-      .then((realtimeAvailability) => {
-        const availabilityById = new Map<string, number>();
-        for (const station of realtimeAvailability) {
-          availabilityById.set(station.id, station.availableBikes);
+    void fetchRealtimeStations(controller.signal)
+      .then((updatedStations) => {
+        if (!controller.signal.aborted) {
+          applyRealtimeStations(updatedStations);
         }
-
-        const minimumRealtimeStationCount = Math.floor(STATIONS.length * 0.98);
-        if (availabilityById.size < minimumRealtimeStationCount) {
-          throw new Error("Realtime bike station data is incomplete.");
-        }
-
-        const updatedStations = STATIONS.map((station) => ({
-          ...station,
-          bikes: availabilityById.get(station.id) ?? null,
-        }));
-
-        setStations(updatedStations);
-        setLiveBikeStatus("ready");
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -2699,7 +3127,7 @@ export default function Home() {
       });
 
     return () => controller.abort();
-  }, []);
+  }, [applyRealtimeStations, fetchRealtimeStations]);
 
   const basePlan = useMemo(
     () =>
@@ -2880,6 +3308,7 @@ export default function Home() {
       });
       committedRouteRef.current = nextRoute;
       setCommittedRoute(nextRoute);
+      cancelNearbyStationLookup();
       setRouteProgressSessionId((sessionId) => sessionId + 1);
       setMapFocusRequest(null);
       if (options.remember !== false) rememberRoute(nextRoute);
@@ -2895,7 +3324,14 @@ export default function Home() {
       setErrorMessage("");
       originLocationRequestGateRef.current.invalidate();
       return true;
-    }, [destination, origin, passType, preferBikeRoads, rememberRoute],
+    }, [
+      cancelNearbyStationLookup,
+      destination,
+      origin,
+      passType,
+      preferBikeRoads,
+      rememberRoute,
+    ],
   );
 
   const findRoute = useCallback(() => {
@@ -3440,7 +3876,9 @@ export default function Home() {
 
   const focusMapCoordinates = useCallback(
     (coordinates: Coordinates, preserveLocationTracking = false) => {
+      cancelNearbyStationLookup();
       if (!preserveLocationTracking) stopMapLocationTracking(true);
+      if (!preserveLocationTracking) setMapUserLocation(null);
       setMapFocusRequest((currentRequest) => ({
         coordinates: [coordinates[0], coordinates[1]],
         requestId: (currentRequest?.requestId ?? 0) + 1,
@@ -3457,7 +3895,7 @@ export default function Home() {
         });
       }
     },
-    [stopMapLocationTracking],
+    [cancelNearbyStationLookup, stopMapLocationTracking],
   );
 
   const focusMapPoint = useCallback(
@@ -3475,9 +3913,221 @@ export default function Home() {
     focusMapCoordinates(nextRouteLeg.target.coordinates, true);
   }, [focusMapCoordinates, nextRouteLeg]);
 
+  const refocusNearbyStation = useCallback(() => {
+    if (!nearbyStationResult) return;
+    setNearbyStationFocusRequestId((requestId) => requestId + 1);
+    scrollToMobileMap();
+  }, [nearbyStationResult, scrollToMobileMap]);
+
+  const closeNearbyStationResult = useCallback(() => {
+    cancelNearbyStationLookup();
+    setMapUserLocation(null);
+    setNearbyStationFocusRequestId((requestId) => requestId + 1);
+  }, [cancelNearbyStationLookup]);
+
+  const lookupNearbyStation = useCallback(
+    (kind: NearbyStationKind) => {
+      cancelNearbyStationLookup();
+      const controller = new AbortController();
+      nearbyLookupAbortControllerRef.current = controller;
+      setNearbyStationLookupKind(kind);
+      setNearbyStationLookupStatus("locating");
+      setNearbyStationError("");
+
+      const isCurrentRequest = () =>
+        nearbyLookupAbortControllerRef.current === controller &&
+        !controller.signal.aborted;
+
+      const resolveNearbyStation = async (position: GeolocationPosition) => {
+        const currentLocation: Coordinates = [
+          position.coords.latitude,
+          position.coords.longitude,
+        ];
+        let lookupStations = STATIONS;
+        let availability: NearbyAvailabilityStatus = "unknown";
+
+        if (kind === "rental") {
+          const lastUpdatedAt = liveBikeUpdatedAtRef.current;
+          const hasFreshAvailability =
+            liveBikeStatus === "ready" &&
+            lastUpdatedAt !== null &&
+            Date.now() - lastUpdatedAt <= NEARBY_AVAILABILITY_FRESH_MS;
+
+          if (hasFreshAvailability) {
+            lookupStations = stationsRef.current;
+            availability = "confirmed";
+          } else {
+            if (!isCurrentRequest()) return;
+            setNearbyStationLookupStatus("checking-availability");
+            try {
+              lookupStations = await fetchRealtimeStations(controller.signal);
+              if (!isCurrentRequest()) return;
+              applyRealtimeStations(lookupStations);
+              availability = "confirmed";
+            } catch (error: unknown) {
+              if (
+                controller.signal.aborted ||
+                (error instanceof DOMException && error.name === "AbortError")
+              ) {
+                return;
+              }
+              setLiveBikeStatus("unavailable");
+              lookupStations = STATIONS;
+              availability = "unknown";
+            }
+          }
+        }
+
+        if (!isCurrentRequest()) return;
+        setNearbyStationLookupStatus("routing");
+        const straightNearestStation =
+          kind === "rental"
+            ? selectNearbyStationCandidates({
+                kind,
+                currentLocation,
+                stations: lookupStations,
+                availability: "unknown",
+              })[0]?.station
+            : undefined;
+
+        try {
+          const result = await findNearbyStation({
+            kind,
+            currentLocation,
+            stations: lookupStations,
+            availability,
+            signal: controller.signal,
+            loadRoute: ({ from, to, signal }) =>
+              loadPointToPointRoute(
+                {
+                  mode: kind === "rental" ? "walk" : "bike",
+                  from: [from[0], from[1]],
+                  to: [to[0], to[1]],
+                  ...(kind === "return"
+                    ? {
+                        bikeRouteMode: preferBikeRoads
+                          ? ("BIKE_ONLY" as const)
+                          : ("SHORTEST" as const),
+                      }
+                    : {}),
+                },
+                signal,
+              ),
+          });
+
+          if (!isCurrentRequest()) return;
+          if (result.status === "no-available") {
+            setNearbyStationError(
+              "현재 대여 가능한 따릉이를 찾지 못했어요. 잠시 후 다시 시도해 주세요.",
+            );
+            return;
+          }
+          if (result.status === "no-stations") {
+            setNearbyStationError("주변에서 따릉이 대여소를 찾지 못했어요.");
+            return;
+          }
+
+          stopMapLocationTracking(true);
+          const segment: RouteSegment = {
+            ...result.route,
+            path: result.route.path.map(
+              ([latitude, longitude]) =>
+                [latitude, longitude] as Coordinates,
+            ),
+            source: result.route.source === "kakao" ? "kakao" : "direct",
+          };
+          const adjustedForAvailability =
+            kind === "rental" &&
+            availability === "confirmed" &&
+            straightNearestStation?.bikes === 0 &&
+            straightNearestStation.id !== result.station.id;
+
+          setMapUserLocation(currentLocation);
+          setMapFocusRequest(null);
+          setNearbyStationResult({
+            kind,
+            userCoordinates: currentLocation,
+            station: result.station,
+            segment,
+            availability,
+            adjustedForAvailability,
+            warning:
+              result.routeStatus === "direct-fallback"
+                ? "실제 경로를 불러오지 못해 직선 기준으로 표시했어요."
+                : undefined,
+          });
+          setNearbyStationError("");
+          setNearbyStationFocusRequestId((requestId) => requestId + 1);
+          scrollToMobileMap();
+        } catch (error: unknown) {
+          if (
+            controller.signal.aborted ||
+            (error instanceof DOMException && error.name === "AbortError")
+          ) {
+            return;
+          }
+          setNearbyStationError(
+            "대여소까지의 경로를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+          );
+        } finally {
+          if (isCurrentRequest()) {
+            nearbyLookupAbortControllerRef.current = null;
+            setNearbyStationLookupStatus("idle");
+            setNearbyStationLookupKind(null);
+          }
+        }
+      };
+
+      requestCurrentPositionOnce({
+        geolocation: navigator.geolocation ?? null,
+        gate: nearbyLocationRequestGateRef.current,
+        onSuccess: (position) => {
+          void resolveNearbyStation(position);
+        },
+        onError: (error) => {
+          if (!isCurrentRequest()) return;
+          nearbyLookupAbortControllerRef.current = null;
+          setNearbyStationLookupStatus("idle");
+          setNearbyStationLookupKind(null);
+          setNearbyStationError(
+            error.code === error.PERMISSION_DENIED
+              ? "위치 권한을 허용한 뒤 다시 시도해 주세요."
+              : error.code === error.TIMEOUT
+                ? "현재 위치 확인 시간이 초과됐어요. 다시 시도해 주세요."
+                : "현재 위치를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+          );
+        },
+        onUnsupported: () => {
+          if (!isCurrentRequest()) return;
+          nearbyLookupAbortControllerRef.current = null;
+          setNearbyStationLookupStatus("idle");
+          setNearbyStationLookupKind(null);
+          setNearbyStationError(
+            "이 브라우저에서는 현재 위치를 사용할 수 없어요.",
+          );
+        },
+        options: {
+          enableHighAccuracy: true,
+          timeout: 10_000,
+          maximumAge: 0,
+        },
+      });
+    },
+    [
+      cancelNearbyStationLookup,
+      liveBikeStatus,
+      applyRealtimeStations,
+      fetchRealtimeStations,
+      preferBikeRoads,
+      scrollToMobileMap,
+      stopMapLocationTracking,
+    ],
+  );
+
   const resetRoute = (focusOrigin = true) => {
     originLocationRequestGateRef.current.invalidate();
     pendingResultFocusRef.current = false;
+    cancelNearbyStationLookup();
     clearActiveRouteSession(window.sessionStorage);
     setMobileDetailsMinimized(false);
     stopMapLocationTracking(true);
@@ -3552,6 +4202,8 @@ export default function Home() {
 
       <div
         className={`workspace${plan ? " has-route" : ""}${
+          nearbyStationResult ? " has-nearby" : ""
+        }${
           plan && mobileDetailsMinimized ? " is-mobile-details-minimized" : ""
         }${plan && instantMobileMapResize ? " is-map-drag-resizing" : ""}`}
         id="top"
@@ -3699,6 +4351,60 @@ export default function Home() {
                 최적 경로 찾기
                 <ArrowRight className="button-arrow" size={18} aria-hidden="true" />
               </button>
+
+              <div
+                className="nearby-station-actions"
+                aria-label="현재 위치에서 가까운 따릉이 대여소 찾기"
+              >
+                {(["rental", "return"] as const).map((kind) => {
+                  const isActive =
+                    nearbyStationLookupKind === kind &&
+                    nearbyStationLookupStatus !== "idle";
+                  const defaultLabel =
+                    kind === "rental"
+                      ? "가장 가까운 출발 대여소 찾기"
+                      : "가장 가까운 반납 대여소 찾기";
+                  const loadingLabel =
+                    nearbyStationLookupStatus === "locating"
+                      ? "현재 위치 확인 중…"
+                      : nearbyStationLookupStatus === "checking-availability"
+                        ? "대여 가능 수량 확인 중…"
+                        : kind === "rental"
+                          ? "출발 대여소 경로 확인 중…"
+                          : "반납 대여소 경로 확인 중…";
+
+                  return (
+                    <button
+                      className={`nearby-station-button nearby-station-button--${kind}${
+                        nearbyStationResult?.kind === kind ? " is-selected" : ""
+                      }`}
+                      type="button"
+                      key={kind}
+                      aria-label={defaultLabel}
+                      aria-busy={isActive}
+                      disabled={nearbyStationLookupStatus !== "idle"}
+                      onClick={() => lookupNearbyStation(kind)}
+                    >
+                      {isActive ? (
+                        <RefreshCw
+                          className="is-spinning"
+                          size={15}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Bike size={15} aria-hidden="true" />
+                      )}
+                      <span>{isActive ? loadingLabel : defaultLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {nearbyStationError ? (
+                <p className="nearby-station-error" role="alert">
+                  {nearbyStationError}
+                </p>
+              ) : null}
 
               {plan ? (
                 <button
@@ -4144,8 +4850,16 @@ export default function Home() {
 
         <section
           ref={mapPanelRef}
-          className={`map-panel${plan ? "" : " is-empty"}`}
-          aria-label={plan ? "경로 지도" : "경로 검색 안내"}
+          className={`map-panel${
+            plan || nearbyStationResult ? "" : " is-empty"
+          }`}
+          aria-label={
+            plan
+              ? "경로 지도"
+              : nearbyStationResult
+                ? "가까운 따릉이 대여소 지도"
+                : "경로 검색 안내"
+          }
         >
           {plan && routeRecommendation && nextRouteLeg ? (
             <RouteMap
@@ -4155,6 +4869,8 @@ export default function Home() {
               geometryStatus={routeRecommendation.geometryStatus}
               transferStops={transferStops}
               focusRequest={mapFocusRequest}
+              nearbyStationResult={nearbyStationResult}
+              nearbyStationFocusRequestId={nearbyStationFocusRequestId}
               userLocation={mapUserLocation}
               userHeading={mapUserHeading}
               locationFocusRequestId={mapLocationFocusRequestId}
@@ -4167,10 +4883,26 @@ export default function Home() {
               onLocate={locateMapUser}
               onFocusNextTarget={focusNextRouteTarget}
               onFocusMarker={focusMapCoordinates}
+              onCloseNearbyStation={closeNearbyStationResult}
+              onRefocusNearbyStation={refocusNearbyStation}
               onMapDragStart={handleMapDragStart}
               onMapTouchStart={leaveMapHeadingMode}
               onEndpointDragStart={prepareRouteEndpointDrag}
               onEndpointMove={moveRouteEndpoint}
+            />
+          ) : nearbyStationResult ? (
+            <NearbyStationMap
+              kind={nearbyStationResult.kind}
+              userCoordinates={nearbyStationResult.userCoordinates}
+              station={nearbyStationResult.station}
+              segment={nearbyStationResult.segment}
+              availability={nearbyStationResult.availability}
+              adjustedForAvailability={
+                nearbyStationResult.adjustedForAvailability
+              }
+              warning={nearbyStationResult.warning}
+              onClose={closeNearbyStationResult}
+              onRefocus={refocusNearbyStation}
             />
           ) : (
             <div className="map-empty-state">
