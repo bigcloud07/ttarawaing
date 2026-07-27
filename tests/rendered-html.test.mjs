@@ -1114,7 +1114,7 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.match(pageSource, /new ResizeObserver\(scheduleLayout\)/);
 });
 
-test("exits heading-up before native touch consumes its drag origin", async () => {
+test("arbitrates touch drag and pinch before changing heading mode", async () => {
   const pageSource = await readFile(
     new URL("../app/page.tsx", import.meta.url),
     "utf8",
@@ -1123,18 +1123,31 @@ test("exits heading-up before native touch consumes its drag origin", async () =
     pageSource.match(
       /function useHeadingAwareMapTouchStart\([\s\S]*?\n}\n\nfunction useHeadingUpMapCanvas/,
     )?.[0] ?? "";
+  const headingCanvasHook =
+    pageSource.match(
+      /function useHeadingUpMapCanvas\([\s\S]*?\n}\n\nfunction getRouteGeometryStatus/,
+    )?.[0] ?? "";
+  const leafletSource = pageSource.slice(
+    pageSource.indexOf("function LeafletRouteMap"),
+    pageSource.indexOf("function KakaoRouteMap"),
+  );
+  const kakaoSource = pageSource.slice(
+    pageSource.indexOf("function KakaoRouteMap"),
+    pageSource.indexOf("function RouteMap("),
+  );
 
   assert.match(touchHook, /const viewport = node\?\.parentElement/);
   assert.match(touchHook, /node\.contains\(target\)/);
   assert.match(touchHook, /event\.touches\.length/);
+  assert.match(touchHook, /const touchGestureActiveRef = useRef\(false\)/);
+  assert.match(touchHook, /const touchDragStartedRef = useRef\(false\)/);
+  assert.match(touchHook, /const gestureHadPinchRef = useRef\(false\)/);
+  assert.match(touchHook, /const restorePendingRef = useRef\(false\)/);
   assert.match(
     touchHook,
     /shouldPrepareHeadingMapTouch\(\s*node\.dataset\.headingUp === "true",\s*event\.touches\.length,\s*\)/,
   );
-  assert.match(
-    touchHook,
-    /runHeadingAwareMapInteractionStart\(node, onMapTouchStart\)/,
-  );
+  assert.match(touchHook, /onSuspendVisualHeading\(\)/);
   assert.match(
     touchHook,
     /viewport\.addEventListener\("touchstart", handleTouchStart, \{\s*capture: true,\s*passive: true,\s*\}\)/,
@@ -1145,19 +1158,87 @@ test("exits heading-up before native touch consumes its drag origin", async () =
   );
   assert.match(touchHook, /touchend/);
   assert.match(touchHook, /touchcancel/);
-  assert.doesNotMatch(touchHook, /preventDefault/);
+  assert.match(touchHook, /onRestoreVisualHeading\(\)/);
+  assert.doesNotMatch(touchHook, /preventDefault|leaveMapHeadingMode/);
+
   const touchStartHandler =
     touchHook.match(
       /const handleTouchStart = \(event: TouchEvent\) => \{([\s\S]*?)\n    \};/,
     )?.[1] ?? "";
+  assert.match(touchStartHandler, /onSuspendVisualHeading\(\)/);
   assert.match(
     touchStartHandler,
-    /runHeadingAwareMapInteractionStart\(node, onMapTouchStart\)/,
+    /if \(nextActive\) gestureHadPinchRef\.current = true/,
   );
   assert.doesNotMatch(
     touchStartHandler,
-    /requestAnimationFrame|setTimeout|Promise/,
+    /leaveMapHeadingMode|onMapDragStart|setMapLocationMode/,
   );
+
+  const markTouchDragStarted =
+    touchHook.match(
+      /const markTouchDragStarted = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/,
+    )?.[1] ?? "";
+  assert.match(
+    markTouchDragStarted,
+    /!touchGestureActiveRef\.current/,
+  );
+  assert.match(markTouchDragStarted, /touchDragStartedRef\.current = true/);
+
+  const touchFinishHandler =
+    touchHook.match(
+      /const handleTouchFinish = \(event: TouchEvent\) => \{([\s\S]*?)\n    \};/,
+    )?.[1] ?? "";
+  assert.match(touchFinishHandler, /updateMapPinchActive/);
+  assert.match(touchFinishHandler, /event\.touches\.length/);
+  assert.match(touchFinishHandler, /requestAnimationFrame/);
+  assert.match(touchFinishHandler, /onRestoreVisualHeading\(\)/);
+  assert.match(
+    touchFinishHandler,
+    /gestureHadPinchRef\.current[\s\S]*restorePendingRef\.current = true[\s\S]*window\.setTimeout\(\s*settleVisualHeading,\s*500,\s*\)[\s\S]*return;/,
+  );
+  assert.match(
+    touchFinishHandler,
+    /touchDragStartedRef\.current[\s\S]*runHeadingAwareMapInteractionStart\(node, onTouchDragEnd\)[\s\S]*return;/,
+  );
+  assert.ok(
+    touchFinishHandler.indexOf("gestureHadPinchRef.current") <
+      touchFinishHandler.indexOf("touchDragStartedRef.current"),
+    "a second finger must let pinch win even after touch dragstart",
+  );
+  assert.match(
+    touchFinishHandler,
+    /requestAnimationFrame\(\(\) => \{[\s\S]*onRestoreVisualHeading\(\)/,
+  );
+  assert.match(
+    touchHook,
+    /window\.clearTimeout\(settleTimeoutRef\.current\)/,
+  );
+  assert.match(
+    touchHook,
+    /touchGestureActiveRef\.current = false[\s\S]*touchDragStartedRef\.current = false[\s\S]*gestureHadPinchRef\.current = false[\s\S]*restorePendingRef\.current = false/,
+  );
+  const settleVisualHeading =
+    touchHook.match(
+      /const settleVisualHeading = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[onRestoreVisualHeading\]\);/,
+    )?.[1] ?? "";
+  assert.match(
+    settleVisualHeading,
+    /if \(!restorePendingRef\.current\) return/,
+  );
+  assert.match(settleVisualHeading, /restorePendingRef\.current = false/);
+  assert.match(settleVisualHeading, /window\.clearTimeout/);
+  assert.match(settleVisualHeading, /onRestoreVisualHeading\(\)/);
+
+  assert.match(headingCanvasHook, /suspendVisualHeading/);
+  assert.match(headingCanvasHook, /restoreVisualHeading/);
+  assert.match(headingCanvasHook, /continuousHeadingRef/);
+  assert.match(headingCanvasHook, /onRelayout\(\)/);
+  assert.match(
+    headingCanvasHook,
+    /!headingUp \|\| heading === null[\s\S]*window\.cancelAnimationFrame\(transitionAnimationFrameRef\.current\)[\s\S]*node\.style\.removeProperty\("transition"\)/,
+  );
+
   assert.ok(
     (
       pageSource.match(/useHeadingAwareMapTouchStart\(\{/g) ?? []
@@ -1168,8 +1249,63 @@ test("exits heading-up before native touch consumes its drag origin", async () =
       pageSource.match(/if \(pinchActiveRef\.current\) return/g) ?? []
     ).length >= 2,
   );
-  assert.match(pageSource, /onMapTouchStart=\{leaveMapHeadingMode\}/);
-  assert.doesNotMatch(pageSource, /onMapTouchStart=\{handleMapDragStart\}/);
+  for (const providerSource of [leafletSource, kakaoSource]) {
+    assert.match(
+      providerSource,
+      /onSuspendVisualHeading:\s*suspendVisualHeading/,
+    );
+    assert.match(
+      providerSource,
+      /onRestoreVisualHeading:\s*restoreVisualHeading/,
+    );
+    assert.match(providerSource, /if \(pinchActiveRef\.current\) return/);
+    assert.match(
+      providerSource,
+      /if \(touchGestureActiveRef\.current\) \{[\s\S]*markTouchDragStarted\(\)[\s\S]*onMapTouchDragStart\(\)[\s\S]*return;[\s\S]*\}[\s\S]*runHeadingAwareMapInteractionStart\(nodeRef\.current, onMapDragStart\)/,
+    );
+  }
+  assert.match(
+    leafletSource,
+    /map\.on\("zoomend", settleVisualHeading\)/,
+  );
+  assert.match(
+    leafletSource,
+    /map\.off\("zoomend", settleVisualHeading\)/,
+  );
+  assert.match(
+    kakaoSource,
+    /sdk\.maps\.event\.addListener\(map, "idle", settleVisualHeading\)/,
+  );
+  assert.match(
+    kakaoSource,
+    /sdk\.maps\.event\.removeListener\(map, "idle", settleVisualHeading\)/,
+  );
+  assert.doesNotMatch(pageSource, /onMapTouchStart/);
+
+  const desktopDragHandler =
+    pageSource.match(
+      /const handleMapDragStart = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/,
+    )?.[1] ?? "";
+  assert.match(desktopDragHandler, /minimizeMobileDetailsFromMapDrag\(\)/);
+  assert.match(desktopDragHandler, /leaveMapHeadingMode\(\)/);
+
+  const touchDragStartHandler =
+    pageSource.match(
+      /const handleMapTouchDragStart = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/,
+    )?.[1] ?? "";
+  assert.match(touchDragStartHandler, /minimizeMobileDetailsFromMapDrag\(\)/);
+  assert.doesNotMatch(touchDragStartHandler, /leaveMapHeadingMode/);
+
+  const touchDragEndHandler =
+    pageSource.match(
+      /const handleMapTouchDragEnd = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/,
+    )?.[1] ?? "";
+  assert.match(touchDragEndHandler, /leaveMapHeadingMode\(\)/);
+  assert.match(
+    pageSource,
+    /onMapTouchDragStart=\{handleMapTouchDragStart\}/,
+  );
+  assert.match(pageSource, /onMapTouchDragEnd=\{handleMapTouchDragEnd\}/);
 
   const leaveHeadingHandler =
     pageSource.match(

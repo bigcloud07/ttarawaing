@@ -84,6 +84,10 @@ export function shouldPrepareHeadingMapTouch(
   );
 }
 
+export function shouldRestoreHeadingMapTouch(touchCount: number) {
+  return Number.isFinite(touchCount) && touchCount === 0;
+}
+
 export function relayoutPreservingMapCenter<TCenter>(
   map: CenterPreservingMap<TCenter>,
 ) {

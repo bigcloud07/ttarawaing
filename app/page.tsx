@@ -96,6 +96,7 @@ import {
   getRotatingMapCanvasSide,
   relayoutPreservingMapCenter,
   shouldPrepareHeadingMapTouch,
+  shouldRestoreHeadingMapTouch,
   updateMapPinchActive,
   unwrapMapHeading,
 } from "./map-location-camera";
@@ -702,33 +703,77 @@ function runHeadingAwareMapInteractionStart(
 function useHeadingAwareMapTouchStart({
   nodeRef,
   ready,
-  onMapTouchStart,
+  onSuspendVisualHeading,
+  onRestoreVisualHeading,
+  onTouchDragEnd,
 }: {
   nodeRef: RefObject<HTMLDivElement | null>;
   ready: boolean;
-  onMapTouchStart: () => void;
+  onSuspendVisualHeading: () => void;
+  onRestoreVisualHeading: () => void;
+  onTouchDragEnd: () => void;
 }) {
   const pinchActiveRef = useRef(false);
+  const touchGestureActiveRef = useRef(false);
+  const touchDragStartedRef = useRef(false);
+  const gestureHadPinchRef = useRef(false);
+  const restorePendingRef = useRef(false);
+  const releaseAnimationFrameRef = useRef(0);
+  const settleTimeoutRef = useRef<number | null>(null);
+
+  const settleVisualHeading = useCallback(() => {
+    if (!restorePendingRef.current) return;
+    restorePendingRef.current = false;
+    if (settleTimeoutRef.current !== null) {
+      window.clearTimeout(settleTimeoutRef.current);
+      settleTimeoutRef.current = null;
+    }
+    pinchActiveRef.current = false;
+    gestureHadPinchRef.current = false;
+    touchDragStartedRef.current = false;
+    onRestoreVisualHeading();
+  }, [onRestoreVisualHeading]);
+
+  const markTouchDragStarted = useCallback(() => {
+    if (
+      !touchGestureActiveRef.current ||
+      touchDragStartedRef.current
+    ) {
+      return false;
+    }
+    touchDragStartedRef.current = true;
+    return true;
+  }, []);
 
   useEffect(() => {
     const node = nodeRef.current;
     const viewport = node?.parentElement;
     if (!ready || !node || !viewport) return;
 
-    let releaseAnimationFrame = 0;
     const handleTouchStart = (event: TouchEvent) => {
       const target = event.target;
       if (!(target instanceof Node) || !node.contains(target)) return;
-      if (releaseAnimationFrame) {
-        window.cancelAnimationFrame(releaseAnimationFrame);
-        releaseAnimationFrame = 0;
-        pinchActiveRef.current = false;
+      if (releaseAnimationFrameRef.current) {
+        window.cancelAnimationFrame(releaseAnimationFrameRef.current);
+        releaseAnimationFrameRef.current = 0;
       }
+      if (restorePendingRef.current) {
+        restorePendingRef.current = false;
+        if (settleTimeoutRef.current !== null) {
+          window.clearTimeout(settleTimeoutRef.current);
+          settleTimeoutRef.current = null;
+        }
+        pinchActiveRef.current = false;
+        gestureHadPinchRef.current = false;
+        touchDragStartedRef.current = false;
+      }
+      touchGestureActiveRef.current = true;
       const nextActive = updateMapPinchActive(
         pinchActiveRef.current,
         event.touches.length,
       );
       pinchActiveRef.current = nextActive;
+      if (nextActive) gestureHadPinchRef.current = true;
       if (
         !shouldPrepareHeadingMapTouch(
           node.dataset.headingUp === "true",
@@ -737,21 +782,45 @@ function useHeadingAwareMapTouchStart({
       ) {
         return;
       }
-      runHeadingAwareMapInteractionStart(node, onMapTouchStart);
+      onSuspendVisualHeading();
     };
     const handleTouchFinish = (event: TouchEvent) => {
-      if (
-        updateMapPinchActive(
-          pinchActiveRef.current,
-          event.touches.length,
-        )
-      ) {
+      const nextActive = updateMapPinchActive(
+        pinchActiveRef.current,
+        event.touches.length,
+      );
+      pinchActiveRef.current = nextActive;
+      if (!shouldRestoreHeadingMapTouch(event.touches.length)) {
         return;
       }
-      window.cancelAnimationFrame(releaseAnimationFrame);
-      releaseAnimationFrame = window.requestAnimationFrame(() => {
-        releaseAnimationFrame = 0;
+      touchGestureActiveRef.current = false;
+
+      if (gestureHadPinchRef.current) {
+        pinchActiveRef.current = true;
+        touchDragStartedRef.current = false;
+        restorePendingRef.current = true;
+        if (settleTimeoutRef.current !== null) {
+          window.clearTimeout(settleTimeoutRef.current);
+        }
+        settleTimeoutRef.current = window.setTimeout(
+          settleVisualHeading,
+          500,
+        );
+        return;
+      }
+
+      pinchActiveRef.current = false;
+      if (touchDragStartedRef.current) {
+        touchDragStartedRef.current = false;
+        runHeadingAwareMapInteractionStart(node, onTouchDragEnd);
+        return;
+      }
+
+      window.cancelAnimationFrame(releaseAnimationFrameRef.current);
+      releaseAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        releaseAnimationFrameRef.current = 0;
         pinchActiveRef.current = false;
+        onRestoreVisualHeading();
       });
     };
 
@@ -771,12 +840,32 @@ function useHeadingAwareMapTouchStart({
       viewport.removeEventListener("touchstart", handleTouchStart, true);
       viewport.removeEventListener("touchend", handleTouchFinish, true);
       viewport.removeEventListener("touchcancel", handleTouchFinish, true);
-      window.cancelAnimationFrame(releaseAnimationFrame);
+      window.cancelAnimationFrame(releaseAnimationFrameRef.current);
+      if (settleTimeoutRef.current !== null) {
+        window.clearTimeout(settleTimeoutRef.current);
+        settleTimeoutRef.current = null;
+      }
       pinchActiveRef.current = false;
+      touchGestureActiveRef.current = false;
+      touchDragStartedRef.current = false;
+      gestureHadPinchRef.current = false;
+      restorePendingRef.current = false;
     };
-  }, [nodeRef, onMapTouchStart, ready]);
+  }, [
+    nodeRef,
+    onRestoreVisualHeading,
+    onSuspendVisualHeading,
+    onTouchDragEnd,
+    ready,
+    settleVisualHeading,
+  ]);
 
-  return pinchActiveRef;
+  return {
+    pinchActiveRef,
+    touchGestureActiveRef,
+    markTouchDragStarted,
+    settleVisualHeading,
+  };
 }
 
 function useHeadingUpMapCanvas({
@@ -793,17 +882,105 @@ function useHeadingUpMapCanvas({
   onRelayout: () => void;
 }) {
   const continuousHeadingRef = useRef<number | null>(null);
+  const headingUpRef = useRef(false);
+  const visualHeadingSuspendedRef = useRef(false);
+  const transitionAnimationFrameRef = useRef(0);
   const headingUp = enabled && Number.isFinite(heading);
+
+  const applyExpandedLayout = useCallback(() => {
+    const node = nodeRef.current;
+    const viewport = node?.parentElement;
+    if (!node || !viewport) return;
+    const side = getRotatingMapCanvasSide(
+      viewport.clientWidth,
+      viewport.clientHeight,
+    );
+    if (side <= 0) return;
+    node.style.inset = "auto";
+    node.style.left = "50%";
+    node.style.top = "50%";
+    node.style.width = `${side}px`;
+    node.style.height = `${side}px`;
+    node.style.marginLeft = `${-side / 2}px`;
+    node.style.marginTop = `${-side / 2}px`;
+  }, [nodeRef]);
+
+  const applyNeutralLayout = useCallback(() => {
+    const node = nodeRef.current;
+    if (!node) return;
+    node.style.inset = "0";
+    node.style.removeProperty("left");
+    node.style.removeProperty("top");
+    node.style.removeProperty("width");
+    node.style.removeProperty("height");
+    node.style.removeProperty("margin-left");
+    node.style.removeProperty("margin-top");
+  }, [nodeRef]);
+
+  const suspendVisualHeading = useCallback(() => {
+    const node = nodeRef.current;
+    if (
+      !node ||
+      !headingUpRef.current ||
+      visualHeadingSuspendedRef.current
+    ) {
+      return;
+    }
+    window.cancelAnimationFrame(transitionAnimationFrameRef.current);
+    transitionAnimationFrameRef.current = 0;
+    visualHeadingSuspendedRef.current = true;
+    node.dataset.headingVisualSuspended = "true";
+    node.style.transition = "none";
+    node.style.setProperty("--map-counter-rotation", "0deg");
+    node.style.transform = "none";
+    applyNeutralLayout();
+    onRelayout();
+  }, [applyNeutralLayout, nodeRef, onRelayout]);
+
+  const restoreVisualHeading = useCallback(() => {
+    const node = nodeRef.current;
+    if (!node || !visualHeadingSuspendedRef.current) return;
+    visualHeadingSuspendedRef.current = false;
+    node.removeAttribute("data-heading-visual-suspended");
+
+    if (headingUpRef.current) {
+      const continuousHeading = continuousHeadingRef.current;
+      applyExpandedLayout();
+      if (Number.isFinite(continuousHeading)) {
+        node.style.setProperty(
+          "--map-counter-rotation",
+          `${continuousHeading}deg`,
+        );
+        node.style.transform = `rotate(${-Number(continuousHeading)}deg)`;
+      }
+    } else {
+      applyNeutralLayout();
+    }
+    onRelayout();
+
+    transitionAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      transitionAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        transitionAnimationFrameRef.current = 0;
+        node.style.removeProperty("transition");
+      });
+    });
+  }, [applyExpandedLayout, applyNeutralLayout, nodeRef, onRelayout]);
 
   useLayoutEffect(() => {
     const node = nodeRef.current;
     if (!node) return;
+    headingUpRef.current = headingUp;
 
     if (!headingUp || heading === null) {
       continuousHeadingRef.current = null;
+      visualHeadingSuspendedRef.current = false;
+      window.cancelAnimationFrame(transitionAnimationFrameRef.current);
+      transitionAnimationFrameRef.current = 0;
       node.removeAttribute("data-heading-up");
+      node.removeAttribute("data-heading-visual-suspended");
       node.style.removeProperty("--map-counter-rotation");
       node.style.removeProperty("transform");
+      node.style.removeProperty("transition");
       return;
     }
 
@@ -813,6 +990,7 @@ function useHeadingUpMapCanvas({
     );
     continuousHeadingRef.current = continuousHeading;
     node.dataset.headingUp = "true";
+    if (visualHeadingSuspendedRef.current) return;
     node.style.setProperty(
       "--map-counter-rotation",
       `${continuousHeading}deg`,
@@ -827,28 +1005,10 @@ function useHeadingUpMapCanvas({
 
     let animationFrame = 0;
     const applyLayout = () => {
-      if (headingUp) {
-        const side = getRotatingMapCanvasSide(
-          viewport.clientWidth,
-          viewport.clientHeight,
-        );
-        if (side > 0) {
-          node.style.inset = "auto";
-          node.style.left = "50%";
-          node.style.top = "50%";
-          node.style.width = `${side}px`;
-          node.style.height = `${side}px`;
-          node.style.marginLeft = `${-side / 2}px`;
-          node.style.marginTop = `${-side / 2}px`;
-        }
+      if (headingUp && !visualHeadingSuspendedRef.current) {
+        applyExpandedLayout();
       } else {
-        node.style.inset = "0";
-        node.style.removeProperty("left");
-        node.style.removeProperty("top");
-        node.style.removeProperty("width");
-        node.style.removeProperty("height");
-        node.style.removeProperty("margin-left");
-        node.style.removeProperty("margin-top");
+        applyNeutralLayout();
       }
       onRelayout();
     };
@@ -864,7 +1024,23 @@ function useHeadingUpMapCanvas({
       resizeObserver.disconnect();
       window.cancelAnimationFrame(animationFrame);
     };
-  }, [headingUp, nodeRef, onRelayout, ready]);
+  }, [
+    applyExpandedLayout,
+    applyNeutralLayout,
+    headingUp,
+    nodeRef,
+    onRelayout,
+    ready,
+  ]);
+
+  useEffect(
+    () => () => {
+      window.cancelAnimationFrame(transitionAnimationFrameRef.current);
+    },
+    [],
+  );
+
+  return { suspendVisualHeading, restoreVisualHeading };
 }
 
 function getRouteGeometryStatus(geometry: RouteGeometry): RouteGeometryStatus {
@@ -1357,7 +1533,8 @@ function LeafletRouteMap({
   onCloseNearbyStation,
   onRefocusNearbyStation,
   onMapDragStart,
-  onMapTouchStart,
+  onMapTouchDragStart,
+  onMapTouchDragEnd,
   onEndpointDragStart,
   onEndpointMove,
 }: {
@@ -1382,7 +1559,8 @@ function LeafletRouteMap({
   onCloseNearbyStation: () => void;
   onRefocusNearbyStation: () => void;
   onMapDragStart: () => void;
-  onMapTouchStart: () => void;
+  onMapTouchDragStart: () => void;
+  onMapTouchDragEnd: () => void;
   onEndpointDragStart: () => void;
   onEndpointMove: RouteEndpointMoveHandler;
 }) {
@@ -1415,17 +1593,25 @@ function LeafletRouteMap({
   const relayoutMapForHeading = useCallback(() => {
     mapRef.current?.invalidateSize({ pan: true, animate: false });
   }, []);
-  useHeadingUpMapCanvas({
+  const { suspendVisualHeading, restoreVisualHeading } =
+    useHeadingUpMapCanvas({
+      nodeRef,
+      enabled: locationMode === "heading",
+      heading: userHeading,
+      ready,
+      onRelayout: relayoutMapForHeading,
+    });
+  const {
+    pinchActiveRef,
+    touchGestureActiveRef,
+    markTouchDragStarted,
+    settleVisualHeading,
+  } = useHeadingAwareMapTouchStart({
     nodeRef,
-    enabled: locationMode === "heading",
-    heading: userHeading,
     ready,
-    onRelayout: relayoutMapForHeading,
-  });
-  const pinchActiveRef = useHeadingAwareMapTouchStart({
-    nodeRef,
-    ready,
-    onMapTouchStart,
+    onSuspendVisualHeading: suspendVisualHeading,
+    onRestoreVisualHeading: restoreVisualHeading,
+    onTouchDragEnd: onMapTouchDragEnd,
   });
 
   useEffect(() => {
@@ -1441,13 +1627,27 @@ function LeafletRouteMap({
     if (!ready || !map) return;
     const handleNativeMapDragStart = () => {
       if (pinchActiveRef.current) return;
+      if (touchGestureActiveRef.current) {
+        if (markTouchDragStarted()) onMapTouchDragStart();
+        return;
+      }
       runHeadingAwareMapInteractionStart(nodeRef.current, onMapDragStart);
     };
     map.on("dragstart", handleNativeMapDragStart);
+    map.on("zoomend", settleVisualHeading);
     return () => {
       map.off("dragstart", handleNativeMapDragStart);
+      map.off("zoomend", settleVisualHeading);
     };
-  }, [onMapDragStart, pinchActiveRef, ready]);
+  }, [
+    markTouchDragStarted,
+    onMapDragStart,
+    onMapTouchDragStart,
+    pinchActiveRef,
+    ready,
+    settleVisualHeading,
+    touchGestureActiveRef,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -1969,7 +2169,8 @@ function KakaoRouteMap({
   onCloseNearbyStation,
   onRefocusNearbyStation,
   onMapDragStart,
-  onMapTouchStart,
+  onMapTouchDragStart,
+  onMapTouchDragEnd,
   onEndpointDragStart,
   onEndpointMove,
   onError,
@@ -1995,7 +2196,8 @@ function KakaoRouteMap({
   onCloseNearbyStation: () => void;
   onRefocusNearbyStation: () => void;
   onMapDragStart: () => void;
-  onMapTouchStart: () => void;
+  onMapTouchDragStart: () => void;
+  onMapTouchDragEnd: () => void;
   onEndpointDragStart: () => void;
   onEndpointMove: RouteEndpointMoveHandler;
   onError: () => void;
@@ -2031,17 +2233,25 @@ function KakaoRouteMap({
     if (!map) return;
     relayoutPreservingMapCenter(map);
   }, []);
-  useHeadingUpMapCanvas({
+  const { suspendVisualHeading, restoreVisualHeading } =
+    useHeadingUpMapCanvas({
+      nodeRef,
+      enabled: locationMode === "heading",
+      heading: userHeading,
+      ready,
+      onRelayout: relayoutMapForHeading,
+    });
+  const {
+    pinchActiveRef,
+    touchGestureActiveRef,
+    markTouchDragStarted,
+    settleVisualHeading,
+  } = useHeadingAwareMapTouchStart({
     nodeRef,
-    enabled: locationMode === "heading",
-    heading: userHeading,
     ready,
-    onRelayout: relayoutMapForHeading,
-  });
-  const pinchActiveRef = useHeadingAwareMapTouchStart({
-    nodeRef,
-    ready,
-    onMapTouchStart,
+    onSuspendVisualHeading: suspendVisualHeading,
+    onRestoreVisualHeading: restoreVisualHeading,
+    onTouchDragEnd: onMapTouchDragEnd,
   });
 
   useEffect(() => {
@@ -2058,17 +2268,31 @@ function KakaoRouteMap({
     if (!ready || !map || !sdk) return;
     const handleNativeMapDragStart = () => {
       if (pinchActiveRef.current) return;
+      if (touchGestureActiveRef.current) {
+        if (markTouchDragStarted()) onMapTouchDragStart();
+        return;
+      }
       runHeadingAwareMapInteractionStart(nodeRef.current, onMapDragStart);
     };
     sdk.maps.event.addListener(map, "dragstart", handleNativeMapDragStart);
+    sdk.maps.event.addListener(map, "idle", settleVisualHeading);
     return () => {
       sdk.maps.event.removeListener(
         map,
         "dragstart",
         handleNativeMapDragStart,
       );
+      sdk.maps.event.removeListener(map, "idle", settleVisualHeading);
     };
-  }, [onMapDragStart, pinchActiveRef, ready]);
+  }, [
+    markTouchDragStarted,
+    onMapDragStart,
+    onMapTouchDragStart,
+    pinchActiveRef,
+    ready,
+    settleVisualHeading,
+    touchGestureActiveRef,
+  ]);
 
   const clearMapObjects = useCallback(() => {
     mapObjectsRef.current.forEach((mapObject) => mapObject.setMap(null));
@@ -2779,7 +3003,8 @@ function RouteMap({
   onCloseNearbyStation,
   onRefocusNearbyStation,
   onMapDragStart,
-  onMapTouchStart,
+  onMapTouchDragStart,
+  onMapTouchDragEnd,
   onEndpointDragStart,
   onEndpointMove,
 }: {
@@ -2804,7 +3029,8 @@ function RouteMap({
   onCloseNearbyStation: () => void;
   onRefocusNearbyStation: () => void;
   onMapDragStart: () => void;
-  onMapTouchStart: () => void;
+  onMapTouchDragStart: () => void;
+  onMapTouchDragEnd: () => void;
   onEndpointDragStart: () => void;
   onEndpointMove: RouteEndpointMoveHandler;
 }) {
@@ -2849,7 +3075,8 @@ function RouteMap({
         onCloseNearbyStation={onCloseNearbyStation}
         onRefocusNearbyStation={onRefocusNearbyStation}
         onMapDragStart={onMapDragStart}
-        onMapTouchStart={onMapTouchStart}
+        onMapTouchDragStart={onMapTouchDragStart}
+        onMapTouchDragEnd={onMapTouchDragEnd}
         onEndpointDragStart={onEndpointDragStart}
         onEndpointMove={onEndpointMove}
         onError={useLeafletFallback}
@@ -2880,7 +3107,8 @@ function RouteMap({
         onCloseNearbyStation={onCloseNearbyStation}
         onRefocusNearbyStation={onRefocusNearbyStation}
         onMapDragStart={onMapDragStart}
-        onMapTouchStart={onMapTouchStart}
+        onMapTouchDragStart={onMapTouchDragStart}
+        onMapTouchDragEnd={onMapTouchDragEnd}
         onEndpointDragStart={onEndpointDragStart}
         onEndpointMove={onEndpointMove}
       />
@@ -3560,6 +3788,14 @@ export default function Home() {
     minimizeMobileDetailsFromMapDrag();
     leaveMapHeadingMode();
   }, [leaveMapHeadingMode, minimizeMobileDetailsFromMapDrag]);
+
+  const handleMapTouchDragStart = useCallback(() => {
+    minimizeMobileDetailsFromMapDrag();
+  }, [minimizeMobileDetailsFromMapDrag]);
+
+  const handleMapTouchDragEnd = useCallback(() => {
+    leaveMapHeadingMode();
+  }, [leaveMapHeadingMode]);
 
   const prepareRouteEndpointDrag = useCallback(() => {
     pendingResultFocusRef.current = false;
@@ -4886,7 +5122,8 @@ export default function Home() {
               onCloseNearbyStation={closeNearbyStationResult}
               onRefocusNearbyStation={refocusNearbyStation}
               onMapDragStart={handleMapDragStart}
-              onMapTouchStart={leaveMapHeadingMode}
+              onMapTouchDragStart={handleMapTouchDragStart}
+              onMapTouchDragEnd={handleMapTouchDragEnd}
               onEndpointDragStart={prepareRouteEndpointDrag}
               onEndpointMove={moveRouteEndpoint}
             />

@@ -6,6 +6,7 @@ import {
   getRotatingMapCanvasSide,
   relayoutPreservingMapCenter,
   shouldPrepareHeadingMapTouch,
+  shouldRestoreHeadingMapTouch,
   updateMapPinchActive,
   unwrapMapHeading,
 } from "../app/map-location-camera.ts";
@@ -69,14 +70,32 @@ test("회전 지도 캔버스는 뷰포트 대각선 크기로 모서리 공백�
   assert.equal(getRotatingMapCanvasSide(Number.NaN, 450), 0);
 });
 
-test("핀치 상태는 두 손가락부터 시작하고 모든 손가락을 뗄 때 끝난다", () => {
-  assert.equal(updateMapPinchActive(false, 1), false);
-  assert.equal(updateMapPinchActive(false, 2), true);
+test("핀치 상태는 1→2→1→0 터치 흐름에서 마지막 손가락까지 유지된다", () => {
+  let active = false;
+  const states = [1, 2, 1, 0].map((touchCount) => {
+    active = updateMapPinchActive(active, touchCount);
+    return active;
+  });
+
+  assert.deepEqual(states, [false, true, true, false]);
   assert.equal(updateMapPinchActive(false, 3), true);
-  assert.equal(updateMapPinchActive(true, 1), true);
-  assert.equal(updateMapPinchActive(true, 0), false);
+});
+
+test("한 손가락 탭은 핀치 상태를 만들지 않는다", () => {
+  let active = updateMapPinchActive(false, 1);
+  assert.equal(active, false);
+  active = updateMapPinchActive(active, 0);
+  assert.equal(active, false);
   assert.equal(updateMapPinchActive(false, Number.NaN), false);
   assert.equal(updateMapPinchActive(false, -1), false);
+});
+
+test("터치 종료와 취소는 모든 손가락이 사라졌을 때만 시각 방향을 복원한다", () => {
+  assert.equal(shouldRestoreHeadingMapTouch(0), true);
+  assert.equal(shouldRestoreHeadingMapTouch(1), false);
+  assert.equal(shouldRestoreHeadingMapTouch(2), false);
+  assert.equal(shouldRestoreHeadingMapTouch(Number.NaN), false);
+  assert.equal(shouldRestoreHeadingMapTouch(-1), false);
 });
 
 test("방향 보기 지도는 SDK가 첫 터치 좌표를 기록하기 전에 준비한다", () => {
