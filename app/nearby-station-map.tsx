@@ -1,6 +1,6 @@
 "use client";
 
-import { Bike, Crosshair, X } from "lucide-react";
+import { Bike, Crosshair, House, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -991,10 +991,11 @@ function NearbyMapLocationControl({
   locationMode,
   headingStatus,
   onLocate,
+  onHome,
 }: Pick<
   NearbyStationMapProps,
   "locationStatus" | "locationMode" | "headingStatus" | "onLocate"
-> & { ready: boolean }) {
+> & { ready: boolean; onHome: () => void }) {
   const busy =
     locationStatus === "loading" || headingStatus === "requesting";
   const label =
@@ -1027,6 +1028,14 @@ function NearbyMapLocationControl({
           strokeWidth={2.3}
           aria-hidden="true"
         />
+      </button>
+      <button
+        className="map-location-control nearby-home-control"
+        type="button"
+        aria-label="가까운 대여소 결과를 닫고 검색 화면으로 돌아가기"
+        onClick={onHome}
+      >
+        <House size={17} strokeWidth={2.3} aria-hidden="true" />
       </button>
       {locationStatus === "error" ? (
         <span className="map-location-error" role="alert">
@@ -1157,6 +1166,7 @@ export function NearbyStationMap({
         locationMode={locationMode}
         headingStatus={headingStatus}
         onLocate={onLocate}
+        onHome={onClose}
       />
       <NearbyStationResultCard
         kind={kind}

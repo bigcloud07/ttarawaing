@@ -109,7 +109,11 @@ test("가까운 대여소 조회는 검색 입력과 기존 전체 경로를 변
 });
 
 test("가까운 결과 닫기는 임시 레이어만 정리하고 기존 경로 화면으로 돌아간다", async () => {
-  const pageSource = await readFile(pageUrl, "utf8");
+  const [pageSource, nearbyMapSource, styles] = await Promise.all([
+    readFile(pageUrl, "utf8"),
+    readFile(nearbyMapUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
   const closeSource = sourceBetween(
     pageSource,
     "const closeNearbyStationResult = useCallback(",
@@ -132,6 +136,45 @@ test("가까운 결과 닫기는 임시 레이어만 정리하고 기존 경로 
   assert.match(
     pageSource,
     /className=\{`map-panel\$\{[\s\S]*?plan \|\| nearbyStationResult \? "" : " is-empty"/,
+  );
+  assert.match(
+    pageSource,
+    /nearbyStationResult \? \([\s\S]*?className="map-location-control nearby-home-control"[\s\S]*?onClick=\{onCloseNearbyStation\}/,
+  );
+  assert.match(
+    nearbyMapSource,
+    /className="map-location-control nearby-home-control"[\s\S]*?onClick=\{onHome\}/,
+  );
+  assert.match(nearbyMapSource, /onHome=\{onClose\}/);
+  assert.ok(
+    nearbyMapSource.indexOf("<Crosshair") <
+      nearbyMapSource.indexOf('className="map-location-control nearby-home-control"'),
+  );
+  assert.match(
+    nearbyMapSource,
+    /aria-label="가까운 대여소 결과를 닫고 검색 화면으로 돌아가기"/,
+  );
+
+  const mobileStyles = sourceBetween(
+    styles,
+    "@media (max-width: 900px)",
+    "@media (max-width: 480px)",
+  );
+  assert.match(
+    styles,
+    /\.nearby-home-control\s*\{[^}]*display:\s*none/s,
+  );
+  assert.match(
+    mobileStyles,
+    /\.workspace\.has-nearby \.nearby-home-control\s*\{[^}]*display:\s*inline-flex/s,
+  );
+  assert.match(
+    mobileStyles,
+    /\.workspace\.has-nearby \.nearby-result-card__close\s*\{[^}]*display:\s*none/s,
+  );
+  assert.match(
+    styles,
+    /\.map-location-control\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s,
   );
 });
 

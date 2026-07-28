@@ -10,6 +10,7 @@ import {
   ChevronUp,
   Crosshair,
   Footprints,
+  House,
   MapPin,
   Navigation,
   Search,
@@ -1059,6 +1060,16 @@ function RouteMapChrome({
             aria-hidden="true"
           />
         </button>
+        {nearbyStationResult ? (
+          <button
+            className="map-location-control nearby-home-control"
+            type="button"
+            aria-label="가까운 대여소 결과를 닫고 검색 화면으로 돌아가기"
+            onClick={onCloseNearbyStation}
+          >
+            <House size={17} strokeWidth={2.3} aria-hidden="true" />
+          </button>
+        ) : null}
         {locationStatus === "error" ? (
           <span className="map-location-error" role="alert">
             위치를 확인할 수 없어요
