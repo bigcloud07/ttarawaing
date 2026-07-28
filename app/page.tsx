@@ -4890,7 +4890,7 @@ export default function Home() {
                       </button>
                       <a
                         className="bike-seoul-rental-link"
-                        href="bikeSeoul://"
+                        href="bikeseoul://action"
                         aria-label={`따릉이 앱을 열어 ${plan.startStation.name}에서 대여하기`}
                       >
                         <Bike size={14} aria-hidden="true" />

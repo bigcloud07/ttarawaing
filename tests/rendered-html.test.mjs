@@ -664,7 +664,7 @@ test("opens the Seoul Bike app from the recommended rental station card", async 
 
   assert.match(
     pageSource,
-    /className="bike-seoul-rental-link"[\s\S]*?href="bikeSeoul:\/\/"[\s\S]*?따릉이 대여하기/,
+    /className="bike-seoul-rental-link"[\s\S]*?href="bikeseoul:\/\/action"[\s\S]*?따릉이 대여하기/,
   );
   assert.match(
     pageSource,
