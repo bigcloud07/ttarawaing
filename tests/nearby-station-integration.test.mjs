@@ -122,6 +122,8 @@ test("가까운 결과 닫기는 임시 레이어만 정리하고 기존 경로 
   );
 
   assert.match(closeSource, /cancelNearbyStationLookup\(\)/);
+  assert.match(closeSource, /stopMapLocationTracking\(true\)/);
+  assert.match(closeSource, /window\.scrollTo\(\{ top: 0, behavior: "auto" \}\)/);
   assert.match(cancelSource, /setNearbyStationResult\(null\)/);
   assert.doesNotMatch(
     `${closeSource}\n${cancelSource}`,
@@ -170,7 +172,18 @@ test("경로가 없는 모바일 화면에서도 가까운 결과 지도를 노�
     "@media (max-width: 480px)",
   );
   assert.match(mobileStyles, /\.map-panel\.is-empty\s*\{[^}]*display:\s*none/s);
-  assert.match(mobileStyles, /\.map-panel\s*\{[^}]*min-height:\s*350px/s);
+  assert.match(
+    mobileStyles,
+    /\.workspace\.has-nearby\s*\{[^}]*height:\s*calc\(100dvh - 64px\)[^}]*min-height:\s*0/s,
+  );
+  assert.match(
+    mobileStyles,
+    /\.workspace\.has-nearby \.route-panel\s*\{[^}]*display:\s*none/s,
+  );
+  assert.match(
+    mobileStyles,
+    /\.workspace\.has-nearby \.map-panel,[\s\S]*?height:\s*100%[^}]*min-height:\s*0/s,
+  );
 });
 
 test("조회 및 지도 로딩 상태는 보조기기에 알리고 중복 요청을 막는다", async () => {
@@ -203,5 +216,81 @@ test("조회 및 지도 로딩 상태는 보조기기에 알리고 중복 요청
   assert.match(
     nearbyMapSource,
     /className=\{`nearby-result-card[\s\S]*?aria-live="polite"/,
+  );
+});
+
+test("가까운 대여소 전용 지도는 기존 위치·방향 상태와 제스처를 두 지도에 공유한다", async () => {
+  const [pageSource, nearbyMapSource, styles] = await Promise.all([
+    readFile(pageUrl, "utf8"),
+    readFile(nearbyMapUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+
+  const standaloneMapSource = sourceBetween(
+    pageSource,
+    "<NearbyStationMap",
+    "/>",
+  );
+  for (const prop of [
+    "userLocation={mapUserLocation}",
+    "userHeading={mapUserHeading}",
+    "locationFocusRequestId={mapLocationFocusRequestId}",
+    "locationStatus={mapLocationStatus}",
+    "locationMode={mapLocationMode}",
+    "headingStatus={mapHeadingStatus}",
+    "onLocate={locateMapUser}",
+    "onMapDragStart={handleMapDragStart}",
+    "onMapTouchDragStart={handleMapTouchDragStart}",
+    "onMapTouchDragEnd={handleMapTouchDragEnd}",
+  ]) {
+    assert.match(standaloneMapSource, new RegExp(prop.replace(/[{}]/g, "\\$&")));
+  }
+
+  assert.match(nearbyMapSource, /className="map-guide-controls nearby-map-location-controls"/);
+  assert.match(nearbyMapSource, /className=\{`map-location-control \$\{locationStatus\} \$\{locationMode\}`\}/);
+  assert.match(nearbyMapSource, /width:\s*44px|map-location-control/);
+  assert.ok(
+    (nearbyMapSource.match(/useHeadingUpMapCanvas\(\{/g) ?? []).length >= 2,
+  );
+  assert.ok(
+    (nearbyMapSource.match(/useHeadingAwareMapTouchStart\(\{/g) ?? []).length >=
+      2,
+  );
+  assert.ok(
+    (nearbyMapSource.match(/if \(pinchActiveRef\.current\) return/g) ?? [])
+      .length >= 2,
+  );
+  assert.match(nearbyMapSource, /map\.on\("zoomend", settleVisualHeading\)/);
+  assert.match(
+    nearbyMapSource,
+    /sdk\.maps\.event\.addListener\(map, "idle", settleVisualHeading\)/,
+  );
+  assert.match(nearbyMapSource, /marker\.setLatLng\(markerCoordinates\)/);
+  assert.match(nearbyMapSource, /overlay\.setPosition\(position\)/);
+  assert.match(
+    nearbyMapSource,
+    /tryConsumeLocationFocusRequest\(locationFocusRequestId\)/,
+  );
+
+  const mobileStyles = sourceBetween(
+    styles,
+    "@media (max-width: 900px)",
+    "@media (max-width: 480px)",
+  );
+  assert.match(
+    mobileStyles,
+    /\.workspace\.has-nearby \.nearby-map-location-controls\s*\{[^}]*display:\s*flex/s,
+  );
+  assert.match(
+    mobileStyles,
+    /\.workspace\.has-nearby \.map-guide-controls\s*\{[^}]*right:\s*14px[^}]*bottom:\s*max\(14px, env\(safe-area-inset-bottom\)\)/s,
+  );
+  assert.match(
+    mobileStyles,
+    /\.nearby-result-card,[\s\S]*?right:\s*66px[^}]*bottom:\s*max\(14px, env\(safe-area-inset-bottom\)\)/s,
+  );
+  assert.match(
+    styles,
+    /\.nearby-map-location-controls\s*\{[^}]*display:\s*none/s,
   );
 });

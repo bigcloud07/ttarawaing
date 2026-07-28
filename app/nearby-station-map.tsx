@@ -1,6 +1,6 @@
 "use client";
 
-import { Bike, X } from "lucide-react";
+import { Bike, Crosshair, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -9,13 +9,32 @@ import {
   useState,
 } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { LayerGroup, Map as LeafletMap } from "leaflet";
+import type {
+  LayerGroup,
+  Map as LeafletMap,
+  Marker as LeafletMarker,
+} from "leaflet";
 import { loadKakaoMapsSdk } from "./kakao-maps";
 import type {
+  KakaoCustomOverlay,
   KakaoMap,
   KakaoMapObject,
   KakaoSdk,
 } from "./kakao-maps";
+import { relayoutPreservingMapCenter } from "./map-location-camera";
+import {
+  CURRENT_LOCATION_MARKER_HTML,
+  createCurrentLocationMarkerElement,
+  runHeadingAwareMapInteractionStart,
+  updateCurrentLocationHeading,
+  useHeadingAwareMapTouchStart,
+  useHeadingUpMapCanvas,
+} from "./map-location-ui";
+import type {
+  MapHeadingStatus,
+  MapLocationMode,
+  MapLocationStatus,
+} from "./map-location-ui";
 import type { Coordinates, RouteSegment } from "./route-geometry";
 
 export type NearbyStationMapKind = "rental" | "return";
@@ -36,13 +55,35 @@ export type NearbyStationMapProps = {
   availability: NearbyStationAvailability;
   adjustedForAvailability: boolean;
   warning?: string;
+  userLocation: Coordinates | null;
+  userHeading: number | null;
+  locationFocusRequestId: number;
+  tryConsumeLocationFocusRequest: (requestId: number) => boolean;
+  locationStatus: MapLocationStatus;
+  locationMode: MapLocationMode;
+  headingStatus: MapHeadingStatus;
+  onLocate: () => void;
+  onMapDragStart: () => void;
+  onMapTouchDragStart: () => void;
+  onMapTouchDragEnd: () => void;
   onClose: () => void;
   onRefocus?: () => void;
 };
 
 type MapCanvasProps = Pick<
   NearbyStationMapProps,
-  "kind" | "userCoordinates" | "station" | "segment"
+  | "kind"
+  | "userCoordinates"
+  | "station"
+  | "segment"
+  | "userLocation"
+  | "userHeading"
+  | "locationFocusRequestId"
+  | "tryConsumeLocationFocusRequest"
+  | "locationMode"
+  | "onMapDragStart"
+  | "onMapTouchDragStart"
+  | "onMapTouchDragEnd"
 > & {
   refocusRequestId: number;
   onRefocus: () => void;
@@ -51,8 +92,6 @@ type MapCanvasProps = Pick<
 type MapProvider = "loading" | "kakao" | "leaflet" | "unavailable";
 
 const DEFAULT_MAP_CENTER: Coordinates = [37.561, 127.006];
-const CURRENT_LOCATION_MARKER_HTML =
-  '<span class="current-location-marker" aria-hidden="true"><span class="current-location-dot"></span></span>';
 
 function getKindCopy(kind: NearbyStationMapKind) {
   return kind === "rental"
@@ -109,18 +148,6 @@ function getVisibleCoordinates({
     ...path,
     station.coordinates,
   ].filter(isUsableCoordinates);
-}
-
-function createCurrentLocationMarkerElement() {
-  const marker = document.createElement("span");
-  marker.className = "current-location-marker";
-  marker.title = "현재 위치";
-  marker.setAttribute("aria-hidden", "true");
-
-  const dot = document.createElement("span");
-  dot.className = "current-location-dot";
-  marker.appendChild(dot);
-  return marker;
 }
 
 function createStationMarkerElement(
@@ -181,20 +208,62 @@ function KakaoNearbyMapCanvas({
   userCoordinates,
   station,
   segment,
+  userLocation,
+  userHeading,
+  locationFocusRequestId,
+  tryConsumeLocationFocusRequest,
+  locationMode,
   refocusRequestId,
   onRefocus,
+  onMapDragStart,
+  onMapTouchDragStart,
+  onMapTouchDragEnd,
   onError,
 }: MapCanvasProps & { onError: () => void }) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<KakaoMap | null>(null);
   const sdkRef = useRef<KakaoSdk | null>(null);
   const mapObjectsRef = useRef<KakaoMapObject[]>([]);
+  const locationObjectRef = useRef<KakaoCustomOverlay | null>(null);
+  const locationMarkerElementRef = useRef<HTMLElement | null>(null);
+  const userLocationRef = useRef(userLocation);
+  const userHeadingRef = useRef(userHeading);
   const [ready, setReady] = useState(false);
+
+  const relayoutMapForHeading = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    relayoutPreservingMapCenter(map);
+  }, []);
+  const { suspendVisualHeading, restoreVisualHeading } =
+    useHeadingUpMapCanvas({
+      nodeRef,
+      enabled: locationMode === "heading",
+      heading: userHeading,
+      ready,
+      onRelayout: relayoutMapForHeading,
+    });
+  const {
+    pinchActiveRef,
+    touchGestureActiveRef,
+    markTouchDragStarted,
+    settleVisualHeading,
+  } = useHeadingAwareMapTouchStart({
+    nodeRef,
+    ready,
+    onSuspendVisualHeading: suspendVisualHeading,
+    onRestoreVisualHeading: restoreVisualHeading,
+    onTouchDragEnd: onMapTouchDragEnd,
+  });
 
   const clearMapObjects = useCallback(() => {
     mapObjectsRef.current.forEach((mapObject) => mapObject.setMap(null));
     mapObjectsRef.current = [];
   }, []);
+
+  useEffect(() => {
+    userLocationRef.current = userLocation;
+  }, [userLocation]);
 
   useEffect(() => {
     let active = true;
@@ -220,10 +289,45 @@ function KakaoNearbyMapCanvas({
     return () => {
       active = false;
       clearMapObjects();
+      locationObjectRef.current?.setMap(null);
+      locationObjectRef.current = null;
+      locationMarkerElementRef.current = null;
       mapRef.current = null;
       sdkRef.current = null;
     };
   }, [clearMapObjects, onError]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const sdk = sdkRef.current;
+    if (!ready || !map || !sdk) return;
+    const handleNativeMapDragStart = () => {
+      if (pinchActiveRef.current) return;
+      if (touchGestureActiveRef.current) {
+        if (markTouchDragStarted()) onMapTouchDragStart();
+        return;
+      }
+      runHeadingAwareMapInteractionStart(nodeRef.current, onMapDragStart);
+    };
+    sdk.maps.event.addListener(map, "dragstart", handleNativeMapDragStart);
+    sdk.maps.event.addListener(map, "idle", settleVisualHeading);
+    return () => {
+      sdk.maps.event.removeListener(
+        map,
+        "dragstart",
+        handleNativeMapDragStart,
+      );
+      sdk.maps.event.removeListener(map, "idle", settleVisualHeading);
+    };
+  }, [
+    markTouchDragStarted,
+    onMapDragStart,
+    onMapTouchDragStart,
+    pinchActiveRef,
+    ready,
+    settleVisualHeading,
+    touchGestureActiveRef,
+  ]);
 
   useEffect(() => {
     const node = nodeRef.current;
@@ -292,19 +396,6 @@ function KakaoNearbyMapCanvas({
       );
     }
 
-    const locationOverlay = new sdk.maps.CustomOverlay({
-      map,
-      position: new sdk.maps.LatLng(
-        userCoordinates[0],
-        userCoordinates[1],
-      ),
-      content: createCurrentLocationMarkerElement(),
-      xAnchor: 0.5,
-      yAnchor: 0.5,
-      zIndex: 5,
-    });
-    mapObjectsRef.current.push(locationOverlay);
-
     const stationMarker = createStationMarkerElement(kind, station.name);
     const handleMarkerClick = (event: Event) => {
       event.stopPropagation();
@@ -330,7 +421,7 @@ function KakaoNearbyMapCanvas({
 
     const bounds = new sdk.maps.LatLngBounds();
     const visibleCoordinates = getVisibleCoordinates({
-      userCoordinates,
+      userCoordinates: userLocationRef.current ?? userCoordinates,
       station,
       segment,
     });
@@ -374,6 +465,59 @@ function KakaoNearbyMapCanvas({
     userCoordinates,
   ]);
 
+  useEffect(() => {
+    const sdk = sdkRef.current;
+    const map = mapRef.current;
+    if (!ready || !sdk || !map) return;
+    const markerCoordinates = userLocation ?? userCoordinates;
+    const position = new sdk.maps.LatLng(
+      markerCoordinates[0],
+      markerCoordinates[1],
+    );
+    let overlay = locationObjectRef.current;
+    if (!overlay) {
+      const marker = createCurrentLocationMarkerElement();
+      overlay = new sdk.maps.CustomOverlay({
+        map,
+        position,
+        content: marker,
+        xAnchor: 0.5,
+        yAnchor: 0.5,
+        zIndex: 5,
+      });
+      locationObjectRef.current = overlay;
+      locationMarkerElementRef.current = marker;
+    } else {
+      overlay.setPosition(position);
+    }
+    updateCurrentLocationHeading(
+      locationMarkerElementRef.current,
+      userLocation ? userHeadingRef.current : null,
+    );
+  }, [ready, userCoordinates, userLocation]);
+
+  useEffect(() => {
+    const sdk = sdkRef.current;
+    const map = mapRef.current;
+    if (!ready || !sdk || !map || !userLocation) return;
+    if (!tryConsumeLocationFocusRequest(locationFocusRequestId)) return;
+    map.setLevel(4);
+    map.panTo(new sdk.maps.LatLng(userLocation[0], userLocation[1]));
+  }, [
+    locationFocusRequestId,
+    ready,
+    tryConsumeLocationFocusRequest,
+    userLocation,
+  ]);
+
+  useEffect(() => {
+    userHeadingRef.current = userHeading;
+    updateCurrentLocationHeading(
+      locationMarkerElementRef.current,
+      userLocation ? userHeading : null,
+    );
+  }, [userHeading, userLocation]);
+
   return (
     <>
       <div
@@ -402,14 +546,55 @@ function LeafletNearbyMapCanvas({
   userCoordinates,
   station,
   segment,
+  userLocation,
+  userHeading,
+  locationFocusRequestId,
+  tryConsumeLocationFocusRequest,
+  locationMode,
   refocusRequestId,
   onRefocus,
+  onMapDragStart,
+  onMapTouchDragStart,
+  onMapTouchDragEnd,
   onError,
 }: MapCanvasProps & { onError: () => void }) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const routeLayerRef = useRef<LayerGroup | null>(null);
+  const locationLayerRef = useRef<LayerGroup | null>(null);
+  const locationMarkerRef = useRef<LeafletMarker | null>(null);
+  const locationMarkerElementRef = useRef<HTMLElement | null>(null);
+  const userLocationRef = useRef(userLocation);
+  const userHeadingRef = useRef(userHeading);
   const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    userLocationRef.current = userLocation;
+  }, [userLocation]);
+
+  const relayoutMapForHeading = useCallback(() => {
+    mapRef.current?.invalidateSize({ pan: true, animate: false });
+  }, []);
+  const { suspendVisualHeading, restoreVisualHeading } =
+    useHeadingUpMapCanvas({
+      nodeRef,
+      enabled: locationMode === "heading",
+      heading: userHeading,
+      ready,
+      onRelayout: relayoutMapForHeading,
+    });
+  const {
+    pinchActiveRef,
+    touchGestureActiveRef,
+    markTouchDragStarted,
+    settleVisualHeading,
+  } = useHeadingAwareMapTouchStart({
+    nodeRef,
+    ready,
+    onSuspendVisualHeading: suspendVisualHeading,
+    onRestoreVisualHeading: restoreVisualHeading,
+    onTouchDragEnd: onMapTouchDragEnd,
+  });
 
   useEffect(() => {
     let active = true;
@@ -439,10 +624,40 @@ function LeafletNearbyMapCanvas({
     return () => {
       active = false;
       routeLayerRef.current = null;
+      locationLayerRef.current = null;
+      locationMarkerRef.current = null;
+      locationMarkerElementRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
     };
   }, [onError]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    const handleNativeMapDragStart = () => {
+      if (pinchActiveRef.current) return;
+      if (touchGestureActiveRef.current) {
+        if (markTouchDragStarted()) onMapTouchDragStart();
+        return;
+      }
+      runHeadingAwareMapInteractionStart(nodeRef.current, onMapDragStart);
+    };
+    map.on("dragstart", handleNativeMapDragStart);
+    map.on("zoomend", settleVisualHeading);
+    return () => {
+      map.off("dragstart", handleNativeMapDragStart);
+      map.off("zoomend", settleVisualHeading);
+    };
+  }, [
+    markTouchDragStarted,
+    onMapDragStart,
+    onMapTouchDragStart,
+    pinchActiveRef,
+    ready,
+    settleVisualHeading,
+    touchGestureActiveRef,
+  ]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -516,18 +731,6 @@ function LeafletNearbyMapCanvas({
           }).addTo(group);
         }
 
-        L.marker(userCoordinates, {
-          icon: L.divIcon({
-            className: "current-location-marker-wrapper",
-            html: CURRENT_LOCATION_MARKER_HTML,
-            iconSize: [44, 44],
-            iconAnchor: [22, 22],
-          }),
-          interactive: false,
-          keyboard: false,
-          title: "현재 위치",
-        }).addTo(group);
-
         const copy = getKindCopy(kind);
         L.marker(station.coordinates, {
           icon: L.divIcon({
@@ -547,7 +750,11 @@ function LeafletNearbyMapCanvas({
           .addTo(group);
 
         const bounds = L.latLngBounds(
-          getVisibleCoordinates({ userCoordinates, station, segment }),
+          getVisibleCoordinates({
+            userCoordinates: userLocationRef.current ?? userCoordinates,
+            station,
+            segment,
+          }),
         );
         const animationFrame = window.requestAnimationFrame(() => {
           map.invalidateSize({ animate: false });
@@ -581,6 +788,75 @@ function LeafletNearbyMapCanvas({
     station,
     userCoordinates,
   ]);
+
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    let active = true;
+    const markerCoordinates = userLocation ?? userCoordinates;
+
+    void import("leaflet")
+      .then((leafletModule) => {
+        const map = mapRef.current;
+        if (!active || !map) return;
+        const L = leafletModule.default;
+        let marker = locationMarkerRef.current;
+        if (!marker) {
+          const group = L.layerGroup().addTo(map);
+          locationLayerRef.current = group;
+          marker = L.marker(markerCoordinates, {
+            icon: L.divIcon({
+              className: "current-location-marker-wrapper",
+              html: CURRENT_LOCATION_MARKER_HTML,
+              iconSize: [44, 44],
+              iconAnchor: [22, 22],
+            }),
+            interactive: false,
+            keyboard: false,
+            title: "현재 위치",
+          }).addTo(group);
+          locationMarkerRef.current = marker;
+        } else {
+          marker.setLatLng(markerCoordinates);
+        }
+        locationMarkerElementRef.current =
+          marker.getElement()?.querySelector<HTMLElement>(
+            ".current-location-marker",
+          ) ?? null;
+        updateCurrentLocationHeading(
+          locationMarkerElementRef.current,
+          userLocation ? userHeadingRef.current : null,
+        );
+      })
+      .catch(() => {
+        if (active) onError();
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [onError, ready, userCoordinates, userLocation]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map || !userLocation) return;
+    if (!tryConsumeLocationFocusRequest(locationFocusRequestId)) return;
+    map.flyTo(userLocation, Math.max(map.getZoom(), 16), {
+      duration: 0.45,
+    });
+  }, [
+    locationFocusRequestId,
+    ready,
+    tryConsumeLocationFocusRequest,
+    userLocation,
+  ]);
+
+  useEffect(() => {
+    userHeadingRef.current = userHeading;
+    updateCurrentLocationHeading(
+      locationMarkerElementRef.current,
+      userLocation ? userHeading : null,
+    );
+  }, [userHeading, userLocation]);
 
   return (
     <>
@@ -709,6 +985,63 @@ export function NearbyStationResultCard({
   );
 }
 
+function NearbyMapLocationControl({
+  ready,
+  locationStatus,
+  locationMode,
+  headingStatus,
+  onLocate,
+}: Pick<
+  NearbyStationMapProps,
+  "locationStatus" | "locationMode" | "headingStatus" | "onLocate"
+> & { ready: boolean }) {
+  const busy =
+    locationStatus === "loading" || headingStatus === "requesting";
+  const label =
+    locationStatus === "error"
+      ? "현재 위치를 확인하지 못했어요. 실시간 추적 다시 시도"
+      : locationMode === "heading" || headingStatus === "denied"
+        ? "현재 위치와 방향 추적을 종료하고 지도를 북쪽 기준으로 되돌리기"
+        : locationMode === "tracking"
+          ? "내가 보는 방향 표시"
+          : "실시간 현재 위치 추적 시작";
+  const headingMessage =
+    headingStatus === "denied"
+      ? "방향 권한을 허용하면 보는 방향을 표시할 수 있어요"
+      : headingStatus === "fallback"
+        ? "방향 센서가 없어 이동 중일 때만 방향을 표시해요"
+        : "";
+
+  return (
+    <div className="map-guide-controls nearby-map-location-controls">
+      <button
+        className={`map-location-control ${locationStatus} ${locationMode}`}
+        type="button"
+        aria-label={label}
+        disabled={!ready || busy}
+        onClick={onLocate}
+      >
+        <Crosshair
+          className={busy ? "is-spinning" : undefined}
+          size={17}
+          strokeWidth={2.3}
+          aria-hidden="true"
+        />
+      </button>
+      {locationStatus === "error" ? (
+        <span className="map-location-error" role="alert">
+          위치를 확인할 수 없어요
+        </span>
+      ) : null}
+      {headingMessage ? (
+        <span className="map-location-error is-guidance" role="status">
+          {headingMessage}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export function NearbyStationMap({
   kind,
   userCoordinates,
@@ -717,6 +1050,17 @@ export function NearbyStationMap({
   availability,
   adjustedForAvailability,
   warning,
+  userLocation,
+  userHeading,
+  locationFocusRequestId,
+  tryConsumeLocationFocusRequest,
+  locationStatus,
+  locationMode,
+  headingStatus,
+  onLocate,
+  onMapDragStart,
+  onMapTouchDragStart,
+  onMapTouchDragEnd,
   onClose,
   onRefocus,
 }: NearbyStationMapProps) {
@@ -753,8 +1097,16 @@ export function NearbyStationMap({
     userCoordinates,
     station,
     segment,
+    userLocation,
+    userHeading,
+    locationFocusRequestId,
+    tryConsumeLocationFocusRequest,
+    locationMode,
     refocusRequestId,
     onRefocus: handleRefocus,
+    onMapDragStart,
+    onMapTouchDragStart,
+    onMapTouchDragEnd,
   };
 
   return (
@@ -799,6 +1151,13 @@ export function NearbyStationMap({
           있어요.
         </div>
       ) : null}
+      <NearbyMapLocationControl
+        ready={provider === "kakao" || provider === "leaflet"}
+        locationStatus={locationStatus}
+        locationMode={locationMode}
+        headingStatus={headingStatus}
+        onLocate={onLocate}
+      />
       <NearbyStationResultCard
         kind={kind}
         station={station}

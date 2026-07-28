@@ -430,11 +430,13 @@ test("shows a centered spinner instead of temporary dotted route geometry", asyn
 });
 
 test("tracks live location, focuses only on request, and rotates the map for heading", async () => {
-  const [pageSource, styles, kakaoSource, cameraSource] = await Promise.all([
+  const [pageSource, styles, kakaoSource, cameraSource, locationUiSource] =
+    await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/map-location-camera.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/map-location-ui.ts", import.meta.url), "utf8"),
   ]);
   const guideControlsRule =
     styles.match(/\.map-guide-controls\s*\{([^}]+)\}/)?.[1] ?? "";
@@ -491,8 +493,8 @@ test("tracks live location, focuses only on request, and rotates the map for hea
   assert.match(pageSource, /marker\.setLatLng\(userLocation\)/);
   assert.match(pageSource, /overlay\.setPosition\(position\)/);
   assert.match(pageSource, /current-location-marker/);
-  assert.match(pageSource, /current-location-direction/);
-  assert.match(pageSource, /has-heading/);
+  assert.match(locationUiSource, /current-location-direction/);
+  assert.match(locationUiSource, /has-heading/);
   assert.match(kakaoSource, /panTo\(position: KakaoLatLng\)/);
   assert.match(kakaoSource, /setPosition\(position: KakaoLatLng\)/);
   assert.match(pageSource, /L\.control\.zoom\(\{ position: "topright" \}\)/);
@@ -505,8 +507,11 @@ test("tracks live location, focuses only on request, and rotates the map for hea
   assert.match(styles, /rotate\(var\(--location-heading\)\)/);
   assert.match(styles, /\.current-location-marker\.has-heading/);
   assert.match(styles, /\.map-canvas\[data-heading-up="true"\]/);
-  assert.match(pageSource, /node\.style\.transform = `rotate\(\$\{-continuousHeading\}deg\)`/);
-  assert.match(pageSource, /getRotatingMapCanvasSide/);
+  assert.match(
+    locationUiSource,
+    /node\.style\.transform = `rotate\(\$\{-continuousHeading\}deg\)`/,
+  );
+  assert.match(locationUiSource, /getRotatingMapCanvasSide/);
   assert.match(cameraSource, /Math\.ceil\(Math\.hypot\(width, height\)\)/);
 });
 
@@ -1067,10 +1072,12 @@ test("provides a draggable mobile route-details sheet that enlarges the map", as
 });
 
 test("minimizes mobile details on map drag without animating the handle", async () => {
-  const [pageSource, kakaoSource, styles] = await Promise.all([
+  const [pageSource, kakaoSource, styles, locationUiSource] =
+    await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/map-location-ui.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(
@@ -1116,10 +1123,13 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.match(mapDragHandler, /leaveMapHeadingMode\(\)/);
   assert.doesNotMatch(mapDragHandler, /stopMapLocationTracking/);
   assert.doesNotMatch(mapDragHandler, /setMapUserLocation/);
-  assert.match(pageSource, /node\.style\.transition = "none"/);
-  assert.match(pageSource, /flushSync\(onInteractionStart\)/);
-  assert.match(pageSource, /node\.style\.removeProperty\("transition"\)/);
-  assert.match(pageSource, /useLayoutEffect\(\(\) => \{/);
+  assert.match(locationUiSource, /node\.style\.transition = "none"/);
+  assert.match(locationUiSource, /flushSync\(onInteractionStart\)/);
+  assert.match(
+    locationUiSource,
+    /node\.style\.removeProperty\("transition"\)/,
+  );
+  assert.match(locationUiSource, /useLayoutEffect\(\(\) => \{/);
   assert.match(kakaoSource, /event:\s*\{[\s\S]*?addListener[\s\S]*?removeListener/);
   assert.doesNotMatch(styles, /\.mobile-details-toggle:hover \.mobile-details-grip/);
   assert.doesNotMatch(
@@ -1131,21 +1141,21 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.match(gripRule, /width:\s*42px/);
   assert.match(gripRule, /background:\s*#b9c3bd/);
   assert.doesNotMatch(gripRule, /transition:|transform:|var\(--green\)/);
-  assert.match(pageSource, /new ResizeObserver\(scheduleLayout\)/);
+  assert.match(locationUiSource, /new ResizeObserver\(scheduleLayout\)/);
 });
 
 test("arbitrates touch drag and pinch before changing heading mode", async () => {
-  const pageSource = await readFile(
-    new URL("../app/page.tsx", import.meta.url),
-    "utf8",
-  );
+  const [pageSource, locationUiSource] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/map-location-ui.ts", import.meta.url), "utf8"),
+  ]);
   const touchHook =
-    pageSource.match(
-      /function useHeadingAwareMapTouchStart\([\s\S]*?\n}\n\nfunction useHeadingUpMapCanvas/,
+    locationUiSource.match(
+      /function useHeadingAwareMapTouchStart\([\s\S]*?\n}\n\nexport function useHeadingUpMapCanvas/,
     )?.[0] ?? "";
   const headingCanvasHook =
-    pageSource.match(
-      /function useHeadingUpMapCanvas\([\s\S]*?\n}\n\nfunction getRouteGeometryStatus/,
+    locationUiSource.match(
+      /function useHeadingUpMapCanvas\([\s\S]*?\n}\s*$/,
     )?.[0] ?? "";
   const leafletSource = pageSource.slice(
     pageSource.indexOf("function LeafletRouteMap"),
@@ -1347,11 +1357,13 @@ test("arbitrates touch drag and pinch before changing heading mode", async () =>
 });
 
 test("keeps the mobile heading-up camera centered through map relayout", async () => {
-  const [pageSource, kakaoSource, cameraSource, styles] = await Promise.all([
+  const [pageSource, kakaoSource, cameraSource, styles, locationUiSource] =
+    await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/map-location-camera.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/map-location-ui.ts", import.meta.url), "utf8"),
   ]);
   const mapCanvasRule =
     styles.match(/\.map-canvas\s*\{(\s*z-index:[^}]+)\}/)?.[1] ?? "";
@@ -1368,10 +1380,16 @@ test("keeps the mobile heading-up camera centered through map relayout", async (
     cameraSource,
     /const center = map\.getCenter\(\);[\s\S]*map\.relayout\(\);[\s\S]*map\.setCenter\(center\);/,
   );
-  assert.match(pageSource, /node\.style\.left = "50%"/);
-  assert.match(pageSource, /node\.style\.top = "50%"/);
-  assert.match(pageSource, /node\.style\.marginLeft = `\$\{-side \/ 2\}px`/);
-  assert.match(pageSource, /node\.style\.marginTop = `\$\{-side \/ 2\}px`/);
+  assert.match(locationUiSource, /node\.style\.left = "50%"/);
+  assert.match(locationUiSource, /node\.style\.top = "50%"/);
+  assert.match(
+    locationUiSource,
+    /node\.style\.marginLeft = `\$\{-side \/ 2\}px`/,
+  );
+  assert.match(
+    locationUiSource,
+    /node\.style\.marginTop = `\$\{-side \/ 2\}px`/,
+  );
   assert.match(mapCanvasRule, /transform-origin:\s*50% 50%/);
 });
 

@@ -2077,6 +2077,10 @@ input:focus-visible {
   background: #e8ede9;
 }
 
+.nearby-map-location-controls {
+  display: none;
+}
+
 .nearby-map-canvas {
   background:
     radial-gradient(circle at 50% 46%, rgba(0, 167, 123, 0.09), transparent 34%),
@@ -2369,6 +2373,17 @@ input:focus-visible {
     flex-direction: column;
   }
 
+  .workspace.has-nearby {
+    height: calc(100vh - 64px);
+    height: calc(100svh - 64px);
+    height: calc(100dvh - 64px);
+    min-height: 0;
+  }
+
+  .workspace.has-nearby .route-panel {
+    display: none;
+  }
+
   .route-panel {
     height: auto;
     padding-top: 0;
@@ -2497,11 +2512,14 @@ input:focus-visible {
     min-height: 240px;
   }
 
-  .workspace.has-nearby:not(.has-route) .map-panel {
+  .workspace.has-nearby .map-panel,
+  .workspace.has-route.has-nearby.is-mobile-details-minimized .map-panel {
     display: block;
     order: -1;
-    height: 44vh;
-    min-height: 350px;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
     scroll-margin-block-start: 64px;
   }
 
@@ -2522,17 +2540,23 @@ input:focus-visible {
   }
 
   .workspace.has-nearby .map-guide-controls {
-    top: 14px;
-    right: auto;
-    bottom: auto;
-    left: 14px;
-    align-items: flex-start;
+    z-index: 440;
+    top: auto;
+    right: 14px;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    left: auto;
+    align-items: flex-end;
+    flex-direction: column-reverse;
+  }
+
+  .workspace.has-nearby .nearby-map-location-controls {
+    display: flex;
   }
 
   .nearby-result-card,
   .nearby-map > .nearby-result-card {
-    right: 14px;
-    bottom: 14px;
+    right: 66px;
+    bottom: max(14px, env(safe-area-inset-bottom));
     left: 14px;
     width: auto;
     max-width: none;
@@ -2570,9 +2594,16 @@ input:focus-visible {
     min-height: 300px;
   }
 
-  .workspace.has-nearby:not(.has-route) .map-panel {
-    height: 39vh;
-    min-height: 360px;
+  .workspace.has-nearby {
+    height: calc(100vh - 60px);
+    height: calc(100svh - 60px);
+    height: calc(100dvh - 60px);
+  }
+
+  .workspace.has-nearby .map-panel,
+  .workspace.has-route.has-nearby.is-mobile-details-minimized .map-panel {
+    height: 100%;
+    min-height: 0;
     scroll-margin-block-start: 60px;
   }
 
