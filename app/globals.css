@@ -1310,6 +1310,33 @@ input:focus-visible {
   background: #eef8f4;
 }
 
+.bike-seoul-rental-link {
+  display: inline-flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 7px;
+  border: 1px solid rgba(0, 127, 94, 0.2);
+  border-radius: 10px;
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 720;
+  text-decoration: none;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.bike-seoul-rental-link:hover {
+  border-color: rgba(0, 127, 94, 0.38);
+  background: #d9f4ea;
+}
+
+.bike-seoul-rental-link svg {
+  flex: 0 0 auto;
+}
+
 .station-title-line strong {
   overflow: hidden;
   font-size: 12px;

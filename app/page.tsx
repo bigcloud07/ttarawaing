@@ -4888,6 +4888,14 @@ export default function Home() {
                         </span>
                         <span className="station-address">{plan.startStation.address}</span>
                       </button>
+                      <a
+                        className="bike-seoul-rental-link"
+                        href="bikeSeoul://"
+                        aria-label={`따릉이 앱을 열어 ${plan.startStation.name}에서 대여하기`}
+                      >
+                        <Bike size={14} aria-hidden="true" />
+                        따릉이 대여하기
+                      </a>
                       <span
                         className="screen-reader-only"
                         role="status"

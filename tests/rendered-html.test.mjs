@@ -656,6 +656,26 @@ test("skips an empty nearest rental station and explains the substitution", asyn
   assert.match(styles, /\.start-station-adjustment-note\s*\{/);
 });
 
+test("opens the Seoul Bike app from the recommended rental station card", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(
+    pageSource,
+    /className="bike-seoul-rental-link"[\s\S]*?href="bikeSeoul:\/\/"[\s\S]*?따릉이 대여하기/,
+  );
+  assert.match(
+    pageSource,
+    /aria-label=\{`따릉이 앱을 열어 \$\{plan\.startStation\.name\}에서 대여하기`\}/,
+  );
+  assert.match(
+    styles,
+    /\.bike-seoul-rental-link\s*\{[^}]*min-height:\s*44px[^}]*text-decoration:\s*none/s,
+  );
+});
+
 test("uses full start and destination labels on both map providers", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
