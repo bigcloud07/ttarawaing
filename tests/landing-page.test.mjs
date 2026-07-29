@@ -43,11 +43,11 @@ test("server-renders the public ttarawaing landing page", async () => {
   assert.doesNotMatch(html, /완벽한 경로|무조건 가장 가까운|실시간 보장/);
 
   const storyIndex = html.indexOf("만들게 된 계기");
-  const problemIndex = html.indexOf("우리가 발견한 불편");
+  const problemIndex = html.indexOf("해결하고 싶은 불편");
   assert.ok(storyIndex >= 0, "제작 계기 섹션이 렌더링되어야 합니다.");
   assert.ok(
     storyIndex < problemIndex,
-    "제작 계기 섹션이 발견한 불편 섹션보다 먼저 나와야 합니다.",
+    "제작 계기 섹션이 해결하고 싶은 불편 섹션보다 먼저 나와야 합니다.",
   );
   const pageSource = await readFile(
     new URL("../app/about/page.tsx", import.meta.url),

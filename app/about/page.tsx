@@ -329,7 +329,7 @@ export default function AboutPage() {
         <section className={styles.problem} id="problem" aria-labelledby="problem-title">
           <div className={styles.container}>
             <div className={styles.sectionHeading}>
-              <p className={styles.sectionLabel}>우리가 발견한 불편</p>
+              <p className={styles.sectionLabel}>해결하고 싶은 불편</p>
               <h2 id="problem-title">
                 한 번 타려는데,
                 <br />
