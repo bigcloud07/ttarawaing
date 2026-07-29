@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  KAKAO_ADDRESS_SEARCH_TIMEOUT_MS,
   KAKAO_CONFIG_TIMEOUT_MS,
   KAKAO_PLACE_SEARCH_TIMEOUT_MS,
   KAKAO_REVERSE_GEOCODE_TIMEOUT_MS,
   getKakaoJavascriptKey,
   reverseGeocodeKakaoCoordinates,
+  searchKakaoAddress,
   searchKakaoKeyword,
 } from "../app/kakao-maps.ts";
 
@@ -45,6 +47,29 @@ function createGeocoderSdk(coord2Address) {
           OK: "OK",
           ZERO_RESULT: "ZERO_RESULT",
           ERROR: "ERROR",
+        },
+      },
+    },
+  };
+}
+
+function createAddressSearchSdk(addressSearch) {
+  return {
+    maps: {
+      services: {
+        Geocoder: class {
+          addressSearch(...args) {
+            addressSearch(...args);
+          }
+        },
+        Status: {
+          OK: "OK",
+          ZERO_RESULT: "ZERO_RESULT",
+          ERROR: "ERROR",
+        },
+        AnalyzeType: {
+          SIMILAR: "SIMILAR",
+          EXACT: "EXACT",
         },
       },
     },
@@ -161,6 +186,65 @@ test("preserves Kakao place search success, empty, and error results", async (t)
   });
 });
 
+test("bounds a Kakao address search when its callback never runs", async () => {
+  const sdk = createAddressSearchSdk(() => {});
+
+  await assert.rejects(
+    searchKakaoAddress(sdk, "서울 동작구 사당로9가길 82", 5),
+    /address search request timed out/i,
+  );
+});
+
+test("preserves Kakao address search success, empty, and error results", async (t) => {
+  await t.test("success with similar matching", async () => {
+    const expected = [
+      {
+        address_name: "서울 동작구 사당로9가길 82",
+        address_type: "ROAD_ADDR",
+        x: "126.967",
+        y: "37.488",
+      },
+    ];
+    const sdk = createAddressSearchSdk((address, callback, options) => {
+      assert.equal(address, "서울 동작구 사당로9가길 82");
+      assert.deepEqual(options, {
+        page: 1,
+        size: 10,
+        analyze_type: "SIMILAR",
+      });
+      callback(expected, "OK", null);
+    });
+    assert.deepEqual(
+      await searchKakaoAddress(
+        sdk,
+        "서울 동작구 사당로9가길 82",
+        50,
+      ),
+      expected,
+    );
+  });
+
+  await t.test("zero results", async () => {
+    const sdk = createAddressSearchSdk((_address, callback) => {
+      callback([], "ZERO_RESULT", null);
+    });
+    assert.deepEqual(
+      await searchKakaoAddress(sdk, "서울 없는 주소", 50),
+      [],
+    );
+  });
+
+  await t.test("error", async () => {
+    const sdk = createAddressSearchSdk((_address, callback) => {
+      callback([], "ERROR", null);
+    });
+    await assert.rejects(
+      searchKakaoAddress(sdk, "서울 오류 주소", 50),
+      /address search failed/i,
+    );
+  });
+});
+
 test("reverse geocodes dragged coordinates with longitude before latitude", async () => {
   const sdk = createGeocoderSdk((longitude, latitude, callback) => {
     assert.equal(longitude, 126.978);
@@ -218,6 +302,8 @@ test("uses bounded production timeout defaults", () => {
   assert.ok(KAKAO_CONFIG_TIMEOUT_MS <= 10_000);
   assert.ok(KAKAO_PLACE_SEARCH_TIMEOUT_MS > 0);
   assert.ok(KAKAO_PLACE_SEARCH_TIMEOUT_MS <= 10_000);
+  assert.ok(KAKAO_ADDRESS_SEARCH_TIMEOUT_MS > 0);
+  assert.ok(KAKAO_ADDRESS_SEARCH_TIMEOUT_MS <= 10_000);
   assert.ok(KAKAO_REVERSE_GEOCODE_TIMEOUT_MS > 0);
   assert.ok(KAKAO_REVERSE_GEOCODE_TIMEOUT_MS <= 10_000);
 });

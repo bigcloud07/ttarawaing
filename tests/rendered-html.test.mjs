@@ -77,8 +77,8 @@ test("server-renders the ttarawaing route planner", async () => {
   assert.match(html, /상관 없음/);
   assert.doesNotMatch(html, /히스토리/);
   assert.match(html, /이전에 찾은 경로가 여기에 표시돼요/);
-  assert.match(html, /출발 장소를 검색해 주세요/);
-  assert.match(html, /도착 장소를 검색해 주세요/);
+  assert.match(html, /출발 장소 또는 주소를 검색해 주세요/);
+  assert.match(html, /도착 장소 또는 주소를 검색해 주세요/);
   assert.match(html, /장소를 선택하면 따릉이 대여·반납 경로가 지도에 표시돼요/);
   assert.doesNotMatch(html, /value="망원시장"|value="더현대 서울"/);
   assert.doesNotMatch(
@@ -1496,7 +1496,7 @@ test("centers each route time label under its proportional segment", async () =>
   );
 });
 
-test("searches and accepts both Seoul and Gyeonggi Kakao places", async () => {
+test("searches Seoul and Gyeonggi places, road addresses, and parcel addresses", async () => {
   const [pageSource, kakaoSource] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/kakao-maps.ts", import.meta.url), "utf8"),
@@ -1504,14 +1504,17 @@ test("searches and accepts both Seoul and Gyeonggi Kakao places", async () => {
 
   assert.match(kakaoSource, /`서울 \$\{normalized\}`/);
   assert.match(kakaoSource, /`경기 \$\{normalized\}`/);
-  assert.match(kakaoSource, /서울\(\?:특별시\)\?/);
+  assert.match(kakaoSource, /서울\(\?:특별시\|시\)\?/);
   assert.match(kakaoSource, /경기\(\?:도\)\?/);
   assert.match(kakaoSource, /Promise\.allSettled/);
-  assert.match(kakaoSource, /result\.value\.filter/);
-  assert.match(kakaoSource, /result\.id \|\| `\$\{result\.place_name\}/);
+  assert.match(kakaoSource, /searchKakaoAddress/);
+  assert.match(kakaoSource, /addressSearch/);
+  assert.match(kakaoSource, /result\.value[\s\S]*?\.filter/);
+  assert.match(kakaoSource, /result_type:\s*"address"/);
   assert.doesNotMatch(pageSource, /카카오맵 서울·경기 실제 장소/);
   assert.match(pageSource, /isSupportedPlaceAddress\(place\.address\)/);
   assert.doesNotMatch(pageSource, /place\.address\.includes\("서울"\)/);
+  assert.match(pageSource, /건물명, 역명, 도로명 또는 지번 주소/);
 });
 
 test("uses the current operating-station catalog for the Sadang regression", async () => {

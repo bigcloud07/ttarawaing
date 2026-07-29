@@ -122,7 +122,7 @@ import type {
   KakaoCustomOverlay,
   KakaoMap,
   KakaoMapObject,
-  KakaoPlaceResult,
+  KakaoSearchResult,
   KakaoSdk,
 } from "./kakao-maps";
 import type { RouteEndpointKind } from "./route-endpoint-drag";
@@ -401,22 +401,37 @@ function getPlaceMatches(query: string) {
   ).slice(0, 5);
 }
 
-function kakaoPlaceToPlace(result: KakaoPlaceResult): Place | null {
+function kakaoPlaceToPlace(result: KakaoSearchResult): Place | null {
   const latitude = Number(result.y);
   const longitude = Number(result.x);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
-  const category = result.category_name
+  const category = (result.category_name ?? "")
     .split(" > ")
     .filter(Boolean)
     .slice(-2)
     .join(" · ");
+  const addressType = result.address_type ?? "";
+  const addressHint =
+    addressType === "ROAD" || addressType === "ROAD_ADDR"
+      ? "도로명 주소"
+      : addressType === "REGION_ADDR"
+        ? "지번 주소"
+        : "주소";
+  const address =
+    result.road_address_name ||
+    result.address_name ||
+    result.matched_address_name ||
+    "주소 정보 없음";
 
   return {
     id: `kakao:${result.id}`,
     name: result.place_name,
-    address: result.road_address_name || result.address_name || "주소 정보 없음",
-    hint: category || "카카오맵 장소",
+    address,
+    hint:
+      result.result_type === "address"
+        ? addressHint
+        : category || "카카오맵 장소",
     coordinates: [latitude, longitude],
   };
 }
@@ -992,7 +1007,9 @@ function PlaceField({
                 </span>
                 <span className="suggestion-copy">
                   <strong>{place.name}</strong>
-                  <small>{place.address}</small>
+                  <small>
+                    {place.name === place.address ? place.hint : place.address}
+                  </small>
                 </span>
                 {selected?.id === place.id ? (
                   <Check size={16} className="selected-check" aria-hidden="true" />
@@ -1014,7 +1031,7 @@ function PlaceField({
               <small>
                 {failed
                   ? "카카오맵 연결이 지연되어 기본 장소만 확인했어요."
-                  : "건물명, 역명 또는 도로명 주소를 입력해 보세요."}
+                  : "건물명, 역명, 도로명 또는 지번 주소를 입력해 보세요."}
               </small>
             </div>
           )}
@@ -4181,7 +4198,7 @@ export default function Home() {
                     query={originQuery}
                     selected={origin}
                     tone="origin"
-                    placeholder="출발 장소를 검색해 주세요"
+                    placeholder="출발 장소 또는 주소를 검색해 주세요"
                     onQueryChange={(value) => {
                       originLocationRequestGateRef.current.invalidate();
                       setOriginQuery(value);
@@ -4196,7 +4213,7 @@ export default function Home() {
                     query={destinationQuery}
                     selected={destination}
                     tone="destination"
-                    placeholder="도착 장소를 검색해 주세요"
+                    placeholder="도착 장소 또는 주소를 검색해 주세요"
                     onQueryChange={(value) => {
                       setDestinationQuery(value);
                       if (destination?.name !== value) setDestination(null);

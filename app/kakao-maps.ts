@@ -11,6 +11,30 @@ export type KakaoPlaceResult = {
   y: string;
 };
 
+export type KakaoAddressSearchResult = {
+  address_name?: string;
+  address_type?: string;
+  x?: string;
+  y?: string;
+  address?: {
+    address_name?: string;
+    x?: string;
+    y?: string;
+  } | null;
+  road_address?: {
+    address_name?: string;
+    building_name?: string;
+    x?: string;
+    y?: string;
+  } | null;
+};
+
+export type KakaoSearchResult = KakaoPlaceResult & {
+  result_type: "place" | "address";
+  matched_address_name?: string;
+  address_type?: string;
+};
+
 export type KakaoLatLng = {
   getLat(): number;
   getLng(): number;
@@ -73,21 +97,24 @@ type KakaoPlaces = {
   ): void;
 };
 
-type KakaoAddressResult = {
-  address?: {
-    address_name?: string;
-  } | null;
-  road_address?: {
-    address_name?: string;
-    building_name?: string;
-  } | null;
-};
-
 type KakaoGeocoder = {
+  addressSearch(
+    address: string,
+    callback: (
+      results: KakaoAddressSearchResult[],
+      status: string,
+      pagination: unknown,
+    ) => void,
+    options?: {
+      page?: number;
+      size?: number;
+      analyze_type?: string;
+    },
+  ): void;
   coord2Address(
     longitude: number,
     latitude: number,
-    callback: (results: KakaoAddressResult[], status: string) => void,
+    callback: (results: KakaoAddressSearchResult[], status: string) => void,
   ): void;
 };
 
@@ -144,6 +171,10 @@ export type KakaoSdk = {
         ACCURACY: string;
         DISTANCE: string;
       };
+      AnalyzeType?: {
+        SIMILAR: string;
+        EXACT: string;
+      };
     };
   };
 };
@@ -159,6 +190,7 @@ const KAKAO_CONFIG_ENDPOINT = "/api/config/kakao";
 const SDK_LOAD_TIMEOUT_MS = 10_000;
 export const KAKAO_CONFIG_TIMEOUT_MS = 8_000;
 export const KAKAO_PLACE_SEARCH_TIMEOUT_MS = 8_000;
+export const KAKAO_ADDRESS_SEARCH_TIMEOUT_MS = 8_000;
 export const KAKAO_REVERSE_GEOCODE_TIMEOUT_MS = 8_000;
 
 let kakaoSdkPromise: Promise<KakaoSdk> | null = null;
@@ -365,6 +397,63 @@ export function searchKakaoKeyword(
   });
 }
 
+export function searchKakaoAddress(
+  sdk: KakaoSdk,
+  address: string,
+  timeoutMs = KAKAO_ADDRESS_SEARCH_TIMEOUT_MS,
+) {
+  return new Promise<KakaoAddressSearchResult[]>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      callback();
+    };
+    const timeoutId = globalThis.setTimeout(
+      () =>
+        finish(() =>
+          reject(new Error("Kakao address search request timed out.")),
+        ),
+      timeoutMs,
+    );
+
+    try {
+      if (!sdk.maps.services.Geocoder) {
+        finish(() => reject(new Error("Kakao address search is unavailable.")));
+        return;
+      }
+      const geocoder = new sdk.maps.services.Geocoder();
+      if (!geocoder.addressSearch) {
+        finish(() => reject(new Error("Kakao address search is unavailable.")));
+        return;
+      }
+      geocoder.addressSearch(
+        address,
+        (results, status) => {
+          if (status === sdk.maps.services.Status.OK) {
+            finish(() => resolve(results));
+            return;
+          }
+          if (status === sdk.maps.services.Status.ZERO_RESULT) {
+            finish(() => resolve([]));
+            return;
+          }
+          finish(() => reject(new Error("Kakao address search failed.")));
+        },
+        {
+          page: 1,
+          size: 10,
+          analyze_type:
+            sdk.maps.services.AnalyzeType?.SIMILAR ?? "SIMILAR",
+        },
+      );
+    } catch (error) {
+      finish(() => reject(error));
+    }
+  });
+}
+
 export function reverseGeocodeKakaoCoordinates(
   sdk: KakaoSdk,
   [latitude, longitude]: Coordinates,
@@ -428,26 +517,109 @@ export async function reverseGeocodeKakao(coordinates: Coordinates) {
   return reverseGeocodeKakaoCoordinates(sdk, coordinates);
 }
 
-function buildRegionalKeywords(query: string) {
+const SUPPORTED_REGION_PREFIX =
+  /^(?:서울(?:특별시|시)?|경기(?:도)?)(?:\s|$)/;
+
+function buildRegionalQueries(query: string) {
   const normalized = query.trim();
-  if (normalized.includes("서울") || normalized.includes("경기")) {
+  if (SUPPORTED_REGION_PREFIX.test(normalized)) {
     return [normalized];
   }
   return [`서울 ${normalized}`, `경기 ${normalized}`];
 }
 
-function interleavePlaceResults(groups: KakaoPlaceResult[][]) {
-  const merged: KakaoPlaceResult[] = [];
+function normalizeSearchKey(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeKakaoPlaceResult(
+  result: KakaoPlaceResult,
+): KakaoSearchResult {
+  return {
+    ...result,
+    id: `place:${result.id || `${result.place_name}|${result.x}|${result.y}`}`,
+    result_type: "place",
+  };
+}
+
+export function normalizeKakaoAddressResult(
+  result: KakaoAddressSearchResult,
+): KakaoSearchResult | null {
+  const matchedAddress = result.address_name?.trim() ?? "";
+  const parcelAddress = result.address?.address_name?.trim() ?? "";
+  const roadAddress = result.road_address?.address_name?.trim() ?? "";
+  const buildingName = result.road_address?.building_name?.trim() ?? "";
+  const longitude =
+    result.x?.trim() ||
+    result.road_address?.x?.trim() ||
+    result.address?.x?.trim() ||
+    "";
+  const latitude =
+    result.y?.trim() ||
+    result.road_address?.y?.trim() ||
+    result.address?.y?.trim() ||
+    "";
+
+  if (
+    !longitude ||
+    !latitude ||
+    !Number.isFinite(Number(longitude)) ||
+    !Number.isFinite(Number(latitude))
+  ) {
+    return null;
+  }
+
+  const representativeAddress =
+    roadAddress || parcelAddress || matchedAddress;
+  const placeName =
+    buildingName || matchedAddress || representativeAddress;
+  if (!representativeAddress || !placeName) return null;
+
+  return {
+    id: [
+      "address",
+      normalizeSearchKey(representativeAddress),
+      longitude,
+      latitude,
+    ].join(":"),
+    result_type: "address",
+    place_name: placeName,
+    category_name: "",
+    address_name: parcelAddress || matchedAddress,
+    road_address_name: roadAddress,
+    matched_address_name: matchedAddress,
+    address_type: result.address_type?.trim() ?? "",
+    x: longitude,
+    y: latitude,
+  };
+}
+
+function searchResultAddress(result: KakaoSearchResult) {
+  return (
+    result.road_address_name ||
+    result.address_name ||
+    result.matched_address_name ||
+    ""
+  );
+}
+
+function interleaveSearchResults(groups: KakaoSearchResult[][]) {
+  const merged: KakaoSearchResult[] = [];
   const seenIds = new Set<string>();
+  const seenDisplayKeys = new Set<string>();
   const longestGroup = Math.max(0, ...groups.map((group) => group.length));
 
   for (let index = 0; index < longestGroup && merged.length < 10; index += 1) {
     for (const group of groups) {
       const result = group[index];
       if (!result) continue;
-      const resultKey = result.id || `${result.place_name}|${result.x}|${result.y}`;
-      if (seenIds.has(resultKey)) continue;
-      seenIds.add(resultKey);
+      const displayKey = [
+        normalizeSearchKey(result.place_name),
+        normalizeSearchKey(searchResultAddress(result)),
+      ].join("|");
+      if (seenIds.has(result.id) || seenDisplayKeys.has(displayKey)) continue;
+      seenIds.add(result.id);
+      seenDisplayKeys.add(displayKey);
       merged.push(result);
       if (merged.length === 10) break;
     }
@@ -456,29 +628,72 @@ function interleavePlaceResults(groups: KakaoPlaceResult[][]) {
 }
 
 export function isSupportedPlaceAddress(address: string) {
-  return /^(서울(?:특별시)?|경기(?:도)?)(?:\s|$)/.test(address.trim());
+  return SUPPORTED_REGION_PREFIX.test(address.trim());
 }
 
-export async function searchKakaoPlaces(query: string) {
-  const sdk = await loadKakaoMapsSdk();
-  const requests = buildRegionalKeywords(query).map((keyword) =>
+function looksLikeAddressQuery(query: string) {
+  return (
+    /\d/.test(query) ||
+    /(?:로|길|동|가|읍|면|리)(?:\s|$)/.test(query.trim())
+  );
+}
+
+export async function searchKakaoPlacesWithSdk(
+  sdk: KakaoSdk,
+  query: string,
+) {
+  const normalized = query.trim();
+  if (!normalized) return [];
+
+  const regionalQueries = buildRegionalQueries(normalized);
+  const keywordRequests = regionalQueries.map((keyword) =>
     searchKakaoKeyword(sdk, keyword),
   );
-  const settledResults = await Promise.allSettled(requests);
-  const successfulGroups = settledResults.flatMap((result) =>
+  const addressRequests = regionalQueries.map((address) =>
+    searchKakaoAddress(sdk, address),
+  );
+  const [settledKeywords, settledAddresses] = await Promise.all([
+    Promise.allSettled(keywordRequests),
+    Promise.allSettled(addressRequests),
+  ]);
+
+  const keywordGroups = settledKeywords.flatMap((result) =>
     result.status === "fulfilled"
       ? [
-          result.value.filter((place) =>
-            isSupportedPlaceAddress(
-              place.road_address_name || place.address_name || "",
+          result.value
+            .map(normalizeKakaoPlaceResult)
+            .filter((place) =>
+              isSupportedPlaceAddress(searchResultAddress(place)),
             ),
-          ),
+        ]
+      : [],
+  );
+  const addressGroups = settledAddresses.flatMap((result) =>
+    result.status === "fulfilled"
+      ? [
+          result.value
+            .map(normalizeKakaoAddressResult)
+            .filter(
+              (address): address is KakaoSearchResult =>
+                address !== null &&
+                isSupportedPlaceAddress(searchResultAddress(address)),
+            ),
         ]
       : [],
   );
 
-  if (!successfulGroups.length) {
+  if (!keywordGroups.length && !addressGroups.length) {
     throw new Error("Kakao place search failed.");
   }
-  return interleavePlaceResults(successfulGroups);
+
+  return interleaveSearchResults(
+    looksLikeAddressQuery(normalized)
+      ? [...addressGroups, ...keywordGroups]
+      : [...keywordGroups, ...addressGroups],
+  );
+}
+
+export async function searchKakaoPlaces(query: string) {
+  const sdk = await loadKakaoMapsSdk();
+  return searchKakaoPlacesWithSdk(sdk, query);
 }
