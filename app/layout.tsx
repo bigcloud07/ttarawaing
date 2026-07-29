@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { Geist } from "next/font/google";
 import "./globals.css";
+import WebAnalytics from "./web-analytics";
 
 const geist = Geist({
   variable: "--font-geist",
@@ -63,9 +64,14 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const isVercelDeployment = process.env.VERCEL === "1";
+
   return (
     <html lang="ko">
-      <body className={geist.variable}>{children}</body>
+      <body className={geist.variable}>
+        {children}
+        {isVercelDeployment ? <WebAnalytics /> : null}
+      </body>
     </html>
   );
 }

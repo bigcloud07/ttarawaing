@@ -68,7 +68,21 @@
 | 경로 계산 | Kakao Maps 도보·자전거 REST API                       |
 | 서버      | vinext, Cloudflare Workers                            |
 | 데이터    | 서울시 공공자전거 대여소 정보, 서울자전거 실시간 현황 |
+| 방문 분석 | Vercel Web Analytics                                  |
 | 테스트    | Node.js Test Runner, ESLint                           |
+
+## 방문 분석
+
+대표 서비스 주소인 `ttarawaing.vercel.app`에는 Vercel Web Analytics를 연결했습니다. 프로젝트 소유자는 [Vercel Analytics 대시보드](https://vercel.com/untae-lees-projects/ttarawaing/analytics)에서 다음 항목을 확인할 수 있습니다.
+
+- 날짜별 익명 방문자와 페이지뷰
+- 많이 본 페이지와 이탈률
+- 유입 referrer
+- 국가, 기기 유형, 브라우저, 운영체제
+
+분석은 기능을 배포한 이후의 방문부터 수집하며 과거 데이터는 소급하지 않습니다. 방문자 값은 하루마다 초기화되는 익명 식별값을 기준으로 하므로, 여러 날에 걸친 고유 사용자 수가 아니라 **일별 익명 방문자 수**로 해석해야 합니다.
+
+분석 스크립트에는 검색어, 장소명, 주소, 대여소 정보, GPS 좌표와 경로 데이터가 전달되지 않습니다. URL의 query와 hash도 전송 전에 제거합니다. 로컬 개발 환경과 별도 Sites 배포에서는 중복 집계를 막기 위해 이 분석 스크립트를 실행하지 않으며, 방문 통계는 대표 Vercel 주소로 유입을 통일해 확인합니다.
 
 ## 데이터와 추천 방식
 
