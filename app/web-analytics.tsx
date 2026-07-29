@@ -1,5 +1,6 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import {
   Analytics,
   type BeforeSendEvent,
@@ -18,6 +19,18 @@ function removeSensitiveUrlParts(event: BeforeSendEvent): BeforeSendEvent {
   }
 }
 
+function subscribeToHost() {
+  return () => {};
+}
+
 export default function WebAnalytics() {
-  return <Analytics beforeSend={removeSensitiveUrlParts} />;
+  const isVercelHost = useSyncExternalStore(
+    subscribeToHost,
+    () => window.location.hostname.endsWith(".vercel.app"),
+    () => false,
+  );
+
+  return isVercelHost ? (
+    <Analytics beforeSend={removeSensitiveUrlParts} />
+  ) : null;
 }

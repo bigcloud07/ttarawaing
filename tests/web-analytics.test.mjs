@@ -10,9 +10,13 @@ test("loads privacy-safe web analytics only for Vercel deployments", async () =>
   ]);
 
   assert.match(packageSource, /"@vercel\/analytics"/);
-  assert.match(layoutSource, /process\.env\.VERCEL === "1"/);
-  assert.match(layoutSource, /isVercelDeployment \? <WebAnalytics \/> : null/);
+  assert.match(layoutSource, /<WebAnalytics \/>/);
   assert.match(analyticsSource, /@vercel\/analytics\/next/);
+  assert.match(
+    analyticsSource,
+    /window\.location\.hostname\.endsWith\("\.vercel\.app"\)/,
+  );
+  assert.match(analyticsSource, /return isVercelHost \? \(/);
   assert.match(analyticsSource, /<Analytics beforeSend=\{removeSensitiveUrlParts\} \/>/);
   assert.match(analyticsSource, /url: `\$\{url\.origin\}\$\{url\.pathname\}`/);
   assert.doesNotMatch(

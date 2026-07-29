@@ -64,13 +64,11 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const isVercelDeployment = process.env.VERCEL === "1";
-
   return (
     <html lang="ko">
       <body className={geist.variable}>
         {children}
-        {isVercelDeployment ? <WebAnalytics /> : null}
+        <WebAnalytics />
       </body>
     </html>
   );
