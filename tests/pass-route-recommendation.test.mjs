@@ -250,6 +250,27 @@ test("기본 도로 경로를 후보 탐색 전에 전달해 제한시간 폴백
   assert.equal(capturedBaseGeometry, result.geometry);
 });
 
+test("이미 계산한 통합 경로가 있으면 기본 경로를 다시 요청하지 않는다", async () => {
+  const baseGeometry = makeGeometry({ totalBikeMinutes: 20 });
+  let loadCount = 0;
+  const result = await recommendPassTransferRoute({
+    baseInput,
+    baseGeometry,
+    passType: "60",
+    stations,
+    startStationId: "start",
+    endStationId: "end",
+    loadGeometry: async () => {
+      loadCount += 1;
+      return makeGeometry({ totalBikeMinutes: 999 });
+    },
+  });
+
+  assert.equal(loadCount, 0);
+  assert.equal(result.geometry, baseGeometry);
+  assert.equal(result.status, "not-needed");
+});
+
 test("경유당 3분을 총 소요시간에 정확히 더한다", () => {
   const geometry = makeGeometry({ totalBikeMinutes: 10 });
   const noTransfer = calculateRouteGeometryMetrics(geometry, 0);

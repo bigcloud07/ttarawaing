@@ -42,6 +42,7 @@ export type PassRouteRecommendationResult<T extends PassTransferStation> = {
 
 export type PassRouteRecommendationInput<T extends PassTransferStation> = {
   baseInput: RouteGeometryInput;
+  baseGeometry?: RouteGeometry;
   passType: PassType;
   stations: readonly T[];
   startStationId: string;
@@ -121,6 +122,7 @@ export async function recommendPassTransferRoute<
   T extends PassTransferStation,
 >({
   baseInput,
+  baseGeometry: providedBaseGeometry,
   passType,
   stations,
   startStationId,
@@ -136,7 +138,8 @@ export async function recommendPassTransferRoute<
   PassRouteRecommendationResult<T>
 > {
   throwIfAborted(signal);
-  const baseGeometry = await loadGeometry(baseInput, signal);
+  const baseGeometry =
+    providedBaseGeometry ?? (await loadGeometry(baseInput, signal));
   throwIfAborted(signal);
   onBaseGeometry?.(baseGeometry);
 

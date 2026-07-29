@@ -70,6 +70,7 @@ import {
   calculateRouteGeometryMetrics,
   recommendPassTransferRoute,
 } from "./pass-route-recommendation";
+import { recommendIntegratedRoute } from "./integrated-route-recommendation";
 import {
   clearActiveRouteSession,
   readActiveRouteSession,
@@ -161,6 +162,7 @@ type RoutePlan = {
   destination: Place;
   startStation: Station;
   startStationAdjustedForAvailability: boolean;
+  startStationOptimizedForTotalRoute: boolean;
   endStation: Station;
   alternatives: Station[];
   walkToMeters: number;
@@ -542,6 +544,7 @@ function buildPlan(
     destination,
     startStation,
     startStationAdjustedForAvailability,
+    startStationOptimizedForTotalRoute: false,
     endStation,
     alternatives,
     walkToMeters,
@@ -669,6 +672,7 @@ function useRouteRecommendation(
   passType: PassType,
   stations: Station[],
   preferBikeRoads: boolean,
+  selectedEndStationId?: string,
 ): RouteRecommendation | null {
   const stationAvailabilityKey = useMemo(
     () =>
@@ -679,7 +683,7 @@ function useRouteRecommendation(
         .join(""),
     [stations],
   );
-  const baseInput = useMemo<RouteGeometryInput | null>(
+  const fallbackInput = useMemo<RouteGeometryInput | null>(
     () =>
       basePlan
         ? {
@@ -696,14 +700,19 @@ function useRouteRecommendation(
   );
   const key = useMemo(
     () =>
-      baseInput
-        ? `${createRouteGeometryKey(baseInput)}|pass:${passType}|availability:${stationAvailabilityKey}`
+      fallbackInput
+        ? `${createRouteGeometryKey(fallbackInput)}|integrated:v1|end:${selectedEndStationId ?? "auto"}|pass:${passType}|availability:${stationAvailabilityKey}`
         : "no-route",
-    [baseInput, passType, stationAvailabilityKey],
+    [
+      fallbackInput,
+      passType,
+      selectedEndStationId,
+      stationAvailabilityKey,
+    ],
   );
   const fallback = useMemo<RouteRecommendation | null>(() => {
-    if (!basePlan || !baseInput) return null;
-    const geometry = createDirectRouteGeometry(baseInput);
+    if (!basePlan || !fallbackInput) return null;
+    const geometry = createDirectRouteGeometry(fallbackInput);
     return {
       key,
       plan: basePlan,
@@ -713,15 +722,16 @@ function useRouteRecommendation(
       bikeLegs: geometry.bikeLegs,
       passStatus: "loading",
     };
-  }, [baseInput, basePlan, key]);
+  }, [basePlan, fallbackInput, key]);
   const [state, setState] = useState<RouteRecommendation | null>(fallback);
 
   useEffect(() => {
-    if (!basePlan || !baseInput || !fallback) {
+    if (!basePlan || !fallbackInput || !fallback) {
       return;
     }
 
     let active = true;
+    let latestPlan = basePlan;
     let latestGeometry = fallback.geometry;
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => {
@@ -732,59 +742,87 @@ function useRouteRecommendation(
         ),
       );
     }, ROUTE_RECOMMENDATION_TIMEOUT_MS);
-    const publish = (
-      geometry: RouteGeometry,
-      transferStops: Station[],
-      passStatus: PassRouteStatus,
-    ) => {
-      if (!active) return;
-      setState({
-        key,
-        plan: applyRouteGeometryToPlan(basePlan, geometry, transferStops.length),
-        geometry,
-        geometryStatus: getRouteGeometryStatus(geometry),
-        transferStops,
-        bikeLegs: geometry.bikeLegs,
-        passStatus,
-      });
-    };
-
-    void recommendPassTransferRoute({
-      baseInput,
-      passType,
+    void recommendIntegratedRoute({
+      origin: basePlan.origin.coordinates,
+      destination: basePlan.destination.coordinates,
       stations,
-      startStationId: basePlan.startStation.id,
-      endStationId: basePlan.endStation.id,
+      selectedEndStationId,
+      bikeRouteMode: preferBikeRoads ? "BIKE_ONLY" : "SHORTEST",
       signal: controller.signal,
-      loadGeometry: (input, signal) =>
-        loadRouteGeometry(input, { signal }),
-      onBaseGeometry: (geometry) => {
-        latestGeometry = geometry;
+      loadRoute: (input, signal) =>
+        loadPointToPointRoute(input, { signal }),
+    })
+      .then(async (integratedRecommendation) => {
+        if (!active) {
+          throw new DOMException("The operation was aborted.", "AbortError");
+        }
+        latestGeometry = integratedRecommendation.geometry;
+        latestPlan = applyRouteGeometryToPlan(
+          {
+            ...basePlan,
+            startStation: integratedRecommendation.startStation,
+            startStationAdjustedForAvailability:
+              integratedRecommendation.adjustedForAvailability,
+            startStationOptimizedForTotalRoute:
+              integratedRecommendation.optimizedForTotalRoute,
+            endStation: integratedRecommendation.endStation,
+            alternatives: integratedRecommendation.alternatives,
+          },
+          latestGeometry,
+          0,
+        );
+        setState({
+          key,
+          plan: latestPlan,
+          geometry: latestGeometry,
+          geometryStatus: getRouteGeometryStatus(latestGeometry),
+          transferStops: [],
+          bikeLegs: latestGeometry.bikeLegs,
+          passStatus: "loading",
+        });
+
+        const optimizedInput: RouteGeometryInput = {
+          origin: latestPlan.origin.coordinates,
+          originAddress: latestPlan.origin.address,
+          startStation: latestPlan.startStation.coordinates,
+          endStation: latestPlan.endStation.coordinates,
+          destination: latestPlan.destination.coordinates,
+          destinationAddress: latestPlan.destination.address,
+          bikeRouteMode: preferBikeRoads ? "BIKE_ONLY" : "SHORTEST",
+        };
+        return recommendPassTransferRoute({
+          baseInput: optimizedInput,
+          baseGeometry: latestGeometry,
+          passType,
+          stations,
+          startStationId: latestPlan.startStation.id,
+          endStationId: latestPlan.endStation.id,
+          signal: controller.signal,
+          loadGeometry: (input, signal) =>
+            loadRouteGeometry(input, { signal }),
+        });
+      })
+      .then((recommendation) => {
         if (!active) return;
         setState({
           key,
-          plan: applyRouteGeometryToPlan(basePlan, geometry, 0),
-          geometry,
-          geometryStatus: getRouteGeometryStatus(geometry),
-          transferStops: [],
-          bikeLegs: geometry.bikeLegs,
-          passStatus: "loading",
+          plan: applyRouteGeometryToPlan(
+            latestPlan,
+            recommendation.geometry,
+            recommendation.transferStops.length,
+          ),
+          geometry: recommendation.geometry,
+          geometryStatus: getRouteGeometryStatus(recommendation.geometry),
+          transferStops: recommendation.transferStops,
+          bikeLegs: recommendation.geometry.bikeLegs,
+          passStatus: recommendation.status,
         });
-      },
-    })
-      .then((recommendation) => {
-        if (!active) return;
-        publish(
-          recommendation.geometry,
-          recommendation.transferStops,
-          recommendation.status,
-        );
       })
       .catch(() => {
         if (!active) return;
         setState({
           key,
-          plan: applyRouteGeometryToPlan(basePlan, latestGeometry, 0),
+          plan: applyRouteGeometryToPlan(latestPlan, latestGeometry, 0),
           geometry: latestGeometry,
           transferStops: [],
           bikeLegs: latestGeometry.bikeLegs,
@@ -799,7 +837,16 @@ function useRouteRecommendation(
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [baseInput, basePlan, fallback, key, passType, stations]);
+  }, [
+    basePlan,
+    fallback,
+    fallbackInput,
+    key,
+    passType,
+    preferBikeRoads,
+    selectedEndStationId,
+    stations,
+  ]);
 
   if (!fallback) return null;
   return state?.key === key ? state : fallback;
@@ -2993,6 +3040,7 @@ export default function Home() {
     passType,
     stations,
     preferBikeRoads,
+    selectedEndStationId,
   );
   const plan = routeRecommendation?.plan ?? null;
   const transferStops = routeRecommendation?.transferStops ?? EMPTY_STATIONS;
@@ -4487,7 +4535,9 @@ export default function Home() {
                             <small>
                               {plan.startStationAdjustedForAvailability
                                 ? "가까운 최적 대여소"
-                                : "가장 가까운 대여소"}
+                                : plan.startStationOptimizedForTotalRoute
+                                  ? "전체 이동이 빠른 대여소"
+                                  : "가장 가까운 대여소"}
                             </small>
                             <strong>{plan.startStation.name}</strong>
                           </span>
@@ -4538,6 +4588,10 @@ export default function Home() {
                         <p className="start-station-adjustment-note" role="status">
                           현재 가장 가까운 정류소의 따릉이가 없어서 다른 최적의 대여소를
                           알려드렸어요!
+                        </p>
+                      ) : plan.startStationOptimizedForTotalRoute ? (
+                        <p className="start-station-adjustment-note" role="status">
+                          조금 더 걸어도 전체 이동시간이 짧은 대여소를 알려드렸어요.
                         </p>
                       ) : null}
                     </div>
@@ -4681,7 +4735,7 @@ export default function Home() {
                                 </small>
                               </span>
                               <span className="alternative-distance">
-                                거리순
+                                추천순
                               </span>
                               {station.id === plan.endStation.id ? (
                                 <Check size={14} aria-hidden="true" />

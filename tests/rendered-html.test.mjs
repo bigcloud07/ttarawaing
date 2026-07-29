@@ -256,6 +256,24 @@ test("uses a five-minute buffer and the theoretical minimum transfer count", () 
   });
 });
 
+test("compares integrated station combinations by total Kakao route time", async () => {
+  const pageSource = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const recommendationSource = await readFile(
+    new URL("../app/integrated-route-recommendation.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(pageSource, /recommendIntegratedRoute/);
+  assert.match(pageSource, /전체 이동이 빠른 대여소/);
+  assert.match(pageSource, /조금 더 걸어도 전체 이동시간이 짧은 대여소/);
+  assert.match(recommendationSource, /totalDurationSeconds/);
+  assert.match(recommendationSource, /finalCandidateCount/);
+  assert.match(recommendationSource, /station\.bikes !== 0/);
+});
+
 test("selects distinct ordered stations along the actual route corridor", () => {
   const routePath = [
     [37.5, 126.9],
