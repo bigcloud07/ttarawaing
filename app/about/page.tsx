@@ -16,6 +16,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import styles from "./page.module.css";
+import ScrollReveal from "./scroll-reveal";
 
 export const metadata: Metadata = {
   title: "따라와잉 소개 — 따릉이 대여부터 반납까지 한 번에",
@@ -171,7 +172,8 @@ const faqs = [
 
 export default function AboutPage() {
   return (
-    <main className={styles.page}>
+    <main className={styles.page} data-landing-reveal-root>
+      <ScrollReveal />
       <a className={styles.skipLink} href="#main-content">
         본문으로 바로가기
       </a>
@@ -296,7 +298,7 @@ export default function AboutPage() {
           aria-labelledby="story-title"
         >
           <div className={styles.container}>
-            <div className={styles.storyCard}>
+            <div className={styles.storyCard} data-reveal="up">
               <div className={styles.storyIcon} aria-hidden="true">
                 <LocateFixed size={28} />
               </div>
@@ -328,7 +330,7 @@ export default function AboutPage() {
 
         <section className={styles.problem} id="problem" aria-labelledby="problem-title">
           <div className={styles.container}>
-            <div className={styles.sectionHeading}>
+            <div className={styles.sectionHeading} data-reveal="up">
               <p className={styles.sectionLabel}>해결하고 싶은 불편</p>
               <h2 id="problem-title">
                 한 번 타려는데,
@@ -341,7 +343,11 @@ export default function AboutPage() {
               </p>
             </div>
 
-            <div className={styles.switchFlow} aria-label="기존 따릉이 경로 탐색 과정">
+            <div
+              className={styles.switchFlow}
+              aria-label="기존 따릉이 경로 탐색 과정"
+              data-reveal="scale"
+            >
               <div className={styles.switchCard}>
                 <MapPinned size={23} aria-hidden="true" />
                 <span>
@@ -368,7 +374,7 @@ export default function AboutPage() {
             </div>
 
             <div className={styles.problemGrid}>
-              <article>
+              <article data-reveal="up">
                 <span>01</span>
                 <h3>가까운 곳에 자전거가 없어요</h3>
                 <p>
@@ -376,7 +382,7 @@ export default function AboutPage() {
                   찾아야 해요.
                 </p>
               </article>
-              <article>
+              <article data-reveal="up" data-reveal-delay="1">
                 <span>02</span>
                 <h3>반납할 곳을 직접 계산해요</h3>
                 <p>
@@ -384,7 +390,7 @@ export default function AboutPage() {
                   확인해야 해요.
                 </p>
               </article>
-              <article>
+              <article data-reveal="up" data-reveal-delay="2">
                 <span>03</span>
                 <h3>한 이동이 여러 경로로 나뉘어요</h3>
                 <p>
@@ -394,7 +400,7 @@ export default function AboutPage() {
               </article>
             </div>
 
-            <blockquote className={styles.quote}>
+            <blockquote className={styles.quote} data-reveal="up">
               <span aria-hidden="true">“</span>
               <p>
                 어디서 반납하고 목적지로 가야 하는지 직접 계산해야 했던 것이
@@ -407,7 +413,10 @@ export default function AboutPage() {
 
         <section className={styles.how} id="how" aria-labelledby="how-title">
           <div className={styles.container}>
-            <div className={`${styles.sectionHeading} ${styles.lightHeading}`}>
+            <div
+              className={`${styles.sectionHeading} ${styles.lightHeading}`}
+              data-reveal="up"
+            >
               <p className={styles.sectionLabel}>하나로 이어지는 여정</p>
               <h2 id="how-title">
                 출발지와 도착지만 고르면
@@ -419,12 +428,17 @@ export default function AboutPage() {
               </p>
             </div>
 
-            <ol className={styles.journey}>
+            <ol className={styles.journey} data-reveal="route">
               {journeySteps.map((step, index) => {
                 const Icon = step.icon;
 
                 return (
-                  <li className={styles[`${step.tone}Step`]} key={step.label}>
+                  <li
+                    className={styles[`${step.tone}Step`]}
+                    data-reveal="up"
+                    data-reveal-delay={String(index)}
+                    key={step.label}
+                  >
                     <div className={styles.stepTop}>
                       <span className={styles.stepNumber}>
                         {String(index + 1).padStart(2, "0")}
@@ -440,7 +454,7 @@ export default function AboutPage() {
               })}
             </ol>
 
-            <div className={styles.howCtaRow}>
+            <div className={styles.howCtaRow} data-reveal="up">
               <Link className={styles.lightCta} href="/">
                 내 경로로 확인해보기
                 <ArrowRight size={18} aria-hidden="true" />
@@ -451,7 +465,7 @@ export default function AboutPage() {
 
         <section className={styles.features} id="features" aria-labelledby="features-title">
           <div className={styles.container}>
-            <div className={styles.sectionHeading}>
+            <div className={styles.sectionHeading} data-reveal="up">
               <p className={styles.sectionLabel}>주요 기능</p>
               <h2 id="features-title">
                 가까움만 보지 않고,
@@ -465,12 +479,14 @@ export default function AboutPage() {
             </div>
 
             <div className={styles.featureGrid}>
-              {features.map((feature) => {
+              {features.map((feature, index) => {
                 const Icon = feature.icon;
 
                 return (
                   <article
                     className={`${styles.featureCard} ${styles[`${feature.tone}Feature`]}`}
+                    data-reveal="up"
+                    data-reveal-delay={String(index % 2)}
                     key={feature.title}
                   >
                     <span className={styles.featureIcon} aria-hidden="true">
@@ -484,7 +500,7 @@ export default function AboutPage() {
               })}
             </div>
 
-            <div className={styles.focusBanner}>
+            <div className={styles.focusBanner} data-reveal="scale">
               <div>
                 <p className={styles.sectionLabel}>따릉이에만 집중했어요</p>
                 <h3>
@@ -513,7 +529,7 @@ export default function AboutPage() {
 
         <section className={styles.proof} id="proof" aria-labelledby="proof-title">
           <div className={styles.container}>
-            <div className={styles.proofHeader}>
+            <div className={styles.proofHeader} data-reveal="up">
               <div className={styles.sectionHeading}>
                 <p className={styles.sectionLabel}>초기 사용 테스트</p>
                 <h2 id="proof-title">
@@ -529,15 +545,19 @@ export default function AboutPage() {
             </div>
 
             <div className={styles.statsGrid}>
-              {stats.map((stat) => (
-                <article key={stat.label}>
+              {stats.map((stat, index) => (
+                <article
+                  data-reveal="up"
+                  data-reveal-delay={String(index)}
+                  key={stat.label}
+                >
                   <strong>{stat.value}</strong>
                   <p>{stat.label}</p>
                 </article>
               ))}
             </div>
 
-            <div className={styles.proofNote}>
+            <div className={styles.proofNote} data-reveal="up">
               <span aria-hidden="true">
                 <Clock3 size={20} />
               </span>
@@ -553,7 +573,7 @@ export default function AboutPage() {
         <section className={styles.faq} id="faq" aria-labelledby="faq-title">
           <div className={styles.container}>
             <div className={styles.faqGrid}>
-              <div className={styles.sectionHeading}>
+              <div className={styles.sectionHeading} data-reveal="up">
                 <p className={styles.sectionLabel}>자주 묻는 질문</p>
                 <h2 id="faq-title">
                   사용하기 전에
@@ -562,7 +582,7 @@ export default function AboutPage() {
                 </h2>
               </div>
 
-              <div className={styles.faqList}>
+              <div className={styles.faqList} data-reveal="up" data-reveal-delay="1">
                 {faqs.map((faq) => (
                   <details key={faq.question}>
                     <summary>{faq.question}</summary>
@@ -576,7 +596,7 @@ export default function AboutPage() {
 
         <section className={styles.finalCta} aria-labelledby="final-cta-title">
           <div className={styles.container}>
-            <div className={styles.finalCtaCard}>
+            <div className={styles.finalCtaCard} data-reveal="scale">
               <span className={styles.finalCtaIcon} aria-hidden="true">
                 <Bike size={30} />
               </span>

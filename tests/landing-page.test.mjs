@@ -89,3 +89,25 @@ test("keeps landing page controls touch-friendly and mobile-safe", async () => {
   assert.match(styles, /@media \(max-width:\s*760px\)/);
   assert.match(styles, /@media \(prefers-reduced-motion:\s*reduce\)/);
 });
+
+test("reveals landing sections smoothly as they enter the viewport", async () => {
+  const [pageSource, revealSource, styles] = await Promise.all([
+    readFile(new URL("../app/about/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/about/scroll-reveal.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/about/page.module.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(pageSource, /data-landing-reveal-root/);
+  assert.match(pageSource, /<ScrollReveal \/>/);
+  assert.match(pageSource, /data-reveal="up"/);
+  assert.match(pageSource, /data-reveal="scale"/);
+  assert.match(pageSource, /data-reveal="route"/);
+  assert.match(revealSource, /IntersectionObserver/);
+  assert.match(revealSource, /prefers-reduced-motion:\s*reduce/);
+  assert.match(revealSource, /observer\.unobserve\(entry\.target\)/);
+  assert.match(
+    styles,
+    /\[data-reveal-visible="true"\][\s\S]*?opacity:\s*1/,
+  );
+  assert.match(styles, /cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\)/);
+});
