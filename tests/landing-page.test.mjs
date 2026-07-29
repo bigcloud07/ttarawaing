@@ -33,6 +33,8 @@ test("server-renders the public ttarawaing landing page", async () => {
   assert.match(html, /따릉이로 가는 길/);
   assert.match(html, /더는 따로 찾지 마세요/);
   assert.match(html, /내 따릉이 경로 찾아보기/);
+  assert.match(html, /카카오맵 자전거 경로를 기반으로 한 이동/);
+  assert.doesNotMatch(html, /카카오 자전거 경로로 이어지는 이동/);
   assert.match(html, /href="\/"/);
   assert.match(html, /href="#how"/);
   assert.match(html, /8명 중 8명/);

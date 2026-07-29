@@ -64,7 +64,7 @@ const journeySteps = [
   },
   {
     label: "따릉이",
-    description: "카카오 자전거 경로로 이어지는 이동",
+    description: "카카오맵 자전거 경로를 기반으로 한 이동",
     tone: "green",
     icon: Navigation,
   },
