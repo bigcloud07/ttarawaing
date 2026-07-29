@@ -107,7 +107,7 @@ test("reveals landing sections smoothly as they enter the viewport", async () =>
   assert.match(revealSource, /observer\.unobserve\(entry\.target\)/);
   assert.match(
     styles,
-    /\[data-reveal-visible="true"\][\s\S]*?opacity:\s*1/,
+    /\[data-reveal\]\[data-reveal-visible="true"\][\s\S]*?opacity:\s*1/,
   );
   assert.match(styles, /cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\)/);
 });

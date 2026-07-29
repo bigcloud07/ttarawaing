@@ -31,7 +31,8 @@
   transform: scale(0.965);
 }
 
-.page[data-reveal-ready="true"] [data-reveal-visible="true"] {
+.page[data-reveal-ready="true"]
+  [data-reveal][data-reveal-visible="true"] {
   opacity: 1;
   filter: blur(0);
   transform: none;
