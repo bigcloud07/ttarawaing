@@ -41,6 +41,24 @@ test("server-renders the public ttarawaing landing page", async () => {
   assert.match(html, /서울시·따릉이의 공식 서비스가 아닌 독립/);
   assert.match(html, /href="https:\/\/github\.com\/woowacourse-personal\/2026-lumen-ttarawaing"/);
   assert.doesNotMatch(html, /완벽한 경로|무조건 가장 가까운|실시간 보장/);
+
+  const storyIndex = html.indexOf("만들게 된 계기");
+  const problemIndex = html.indexOf("우리가 발견한 불편");
+  assert.ok(storyIndex >= 0, "제작 계기 섹션이 렌더링되어야 합니다.");
+  assert.ok(
+    storyIndex < problemIndex,
+    "제작 계기 섹션이 발견한 불편 섹션보다 먼저 나와야 합니다.",
+  );
+  const pageSource = await readFile(
+    new URL("../app/about/page.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.equal(
+    pageSource.match(/<p className=\{styles\.sectionLabel\}>만들게 된 계기<\/p>/g)
+      ?.length,
+    1,
+    "제작 계기 섹션은 한 번만 나와야 합니다.",
+  );
 });
 
 test("links the route planner header to the service introduction", async () => {

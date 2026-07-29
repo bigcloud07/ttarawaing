@@ -849,7 +849,8 @@
 }
 
 .story {
-  background: white;
+  padding: 88px 0 72px;
+  background: #f2f8f4;
 }
 
 .storyCard {
@@ -861,7 +862,7 @@
   border-radius: 28px 28px 28px 11px;
   background:
     radial-gradient(circle at 100% 0, rgba(0, 167, 123, 0.12), transparent 34%),
-    #fbfdfb;
+    white;
   box-shadow: 0 22px 60px rgba(27, 60, 46, 0.08);
 }
 
@@ -887,16 +888,23 @@
   line-height: 1.78;
 }
 
-.githubLink {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  gap: 8px;
-  margin-top: 27px;
+.storyCard .storyHighlight {
+  display: flex;
+  max-width: 700px;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  padding: 17px 20px;
+  border-left: 3px solid var(--landing-green);
+  border-radius: 0 14px 14px 0;
+  background: var(--landing-green-soft);
+  color: #31564a;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.storyHighlight strong {
   color: var(--landing-green-dark);
-  font-size: 14px;
-  font-weight: 750;
-  text-decoration: none;
+  font-weight: 790;
 }
 
 .faqGrid {
@@ -1261,6 +1269,10 @@
   .faq,
   .how {
     padding: 78px 0;
+  }
+
+  .story {
+    padding: 64px 0 52px;
   }
 
   .sectionHeading h2,

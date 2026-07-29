@@ -6,7 +6,6 @@ import {
   Bike,
   Check,
   Clock3,
-  Code2,
   Footprints,
   LocateFixed,
   MapPin,
@@ -291,6 +290,42 @@ export default function AboutPage() {
           </div>
         </section>
 
+        <section
+          className={styles.story}
+          id="story"
+          aria-labelledby="story-title"
+        >
+          <div className={styles.container}>
+            <div className={styles.storyCard}>
+              <div className={styles.storyIcon} aria-hidden="true">
+                <LocateFixed size={28} />
+              </div>
+              <div>
+                <p className={styles.sectionLabel}>만들게 된 계기</p>
+                <h2 id="story-title">
+                  목적지는 하나인데,
+                  <br />
+                  길 찾기는 하나가 아니었어요.
+                </h2>
+                <p>
+                  주말에 가고 싶은 곳까지 따릉이를 타려 했어요. 지도 앱에서
+                  목적지까지 자전거 경로를 찾고, 따릉이 앱에서 출발 대여소를
+                  확인한 뒤, 도착하기 전에는 목적지 근처 반납 대여소를 다시
+                  검색해야 했어요.
+                </p>
+                <p>
+                  한 번의 이동을 위해 여러 화면에서 길을 다시 찾는 일이
+                  당연하지 않다고 생각했어요.
+                </p>
+                <p className={styles.storyHighlight}>
+                  한 번의 따릉이 이동을, 하나의 경로로.
+                  <strong>그 생각에서 따라와잉이 시작됐어요.</strong>
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className={styles.problem} id="problem" aria-labelledby="problem-title">
           <div className={styles.container}>
             <div className={styles.sectionHeading}>
@@ -511,40 +546,6 @@ export default function AboutPage() {
                 추천 경로를 따라 실제 대여와 반납까지 완료한 경험과 재방문은
                 아직 검증하고 있어요.
               </p>
-            </div>
-          </div>
-        </section>
-
-        <section className={styles.story} aria-labelledby="story-title">
-          <div className={styles.container}>
-            <div className={styles.storyCard}>
-              <div className={styles.storyIcon} aria-hidden="true">
-                <LocateFixed size={28} />
-              </div>
-              <div>
-                <p className={styles.sectionLabel}>만들게 된 계기</p>
-                <h2 id="story-title">한 번의 주말 이동에서 시작했어요.</h2>
-                <p>
-                  낯선 목적지로 따릉이를 타고 가려다 지도 앱에서 자전거 길을
-                  찾고, 따릉이 앱에서 출발 대여소를 확인하고, 도착 전에는
-                  반납 대여소를 다시 검색했어요.
-                </p>
-                <p>
-                  한 번의 이동을 위해 몇 번이나 앱을 오가는 일이 당연하지
-                  않다고 생각해 따라와잉을 만들기 시작했습니다. 실제 이용자의
-                  의견을 들으며 대여소 추천과 지도 경로를 계속 개선하고 있어요.
-                </p>
-                <a
-                  className={styles.githubLink}
-                  href="https://github.com/woowacourse-personal/2026-lumen-ttarawaing"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Code2 size={18} aria-hidden="true" />
-                  GitHub에서 만드는 과정 보기
-                  <ArrowRight size={16} aria-hidden="true" />
-                </a>
-              </div>
             </div>
           </div>
         </section>
