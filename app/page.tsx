@@ -4058,6 +4058,13 @@ export default function Home() {
             <small>따릉이로 잇는 서울</small>
           </span>
         </Link>
+        <Link
+          className="service-intro-link"
+          href="/about"
+          aria-label="따라와잉 서비스 소개 보기"
+        >
+          서비스 소개
+        </Link>
       </header>
 
       <div
