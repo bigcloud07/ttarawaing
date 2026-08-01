@@ -78,6 +78,10 @@ import {
 } from "./active-route-session";
 import { fetchRealtimeBikeAvailability } from "./realtime-bikes";
 import {
+  StartStationAvailabilityControl,
+  type BikeAvailabilityRefreshResult,
+} from "./start-station-availability-control";
+import {
   findNearbyStation,
   selectNearbyStationCandidates,
 } from "./nearby-station";
@@ -2909,15 +2913,9 @@ export default function Home() {
   const [stations, setStations] = useState(STATIONS);
   const stationsRef = useRef(stations);
   const liveBikeUpdatedAtRef = useRef<number | null>(null);
-  const liveBikeRefreshAbortControllerRef = useRef<AbortController | null>(null);
   const [liveBikeStatus, setLiveBikeStatus] = useState<
     "loading" | "ready" | "unavailable"
   >("loading");
-  const [isLiveBikeRefreshing, setIsLiveBikeRefreshing] = useState(false);
-  const [liveBikeRefreshError, setLiveBikeRefreshError] = useState<{
-    stationId: string;
-    message: string;
-  } | null>(null);
 
   useEffect(() => {
     stationsRef.current = stations;
@@ -2958,7 +2956,6 @@ export default function Home() {
       originLocationRequestGateRef.current.invalidate();
       nearbyLocationRequestGateRef.current.invalidate();
       nearbyLookupAbortControllerRef.current?.abort();
-      liveBikeRefreshAbortControllerRef.current?.abort();
     },
     [],
   );
@@ -3034,42 +3031,30 @@ export default function Home() {
     setLiveBikeStatus("ready");
   }, []);
 
-  const refreshLiveBikeAvailability = useCallback(async (stationId: string) => {
-    if (
-      liveBikeStatus === "loading" ||
-      liveBikeRefreshAbortControllerRef.current
-    ) {
-      return;
-    }
-
-    const controller = new AbortController();
-    liveBikeRefreshAbortControllerRef.current = controller;
-    setIsLiveBikeRefreshing(true);
-    setLiveBikeRefreshError(null);
-
-    try {
-      const updatedStations = await fetchRealtimeStations(
-        controller.signal,
-        true,
+  const loadFreshStartStationAvailability = useCallback(
+    async (
+      stationId: string,
+      signal: AbortSignal,
+    ): Promise<BikeAvailabilityRefreshResult> => {
+      const updatedStations = await fetchRealtimeStations(signal, true);
+      const refreshedStation = updatedStations.find(
+        (station) => station.id === stationId,
       );
-      if (controller.signal.aborted) return;
-      applyRealtimeStations(updatedStations);
-      showNotice("잔여 대수를 새로고침했어요.", 2_600);
-    } catch {
-      if (controller.signal.aborted) return;
-      if (liveBikeStatus !== "ready") setLiveBikeStatus("unavailable");
-      setLiveBikeRefreshError({
-        stationId,
-        message:
-          "잔여 대수를 새로고침하지 못했어요. 잠시 후 다시 시도해 주세요.",
-      });
-    } finally {
-      if (liveBikeRefreshAbortControllerRef.current === controller) {
-        liveBikeRefreshAbortControllerRef.current = null;
-        setIsLiveBikeRefreshing(false);
+
+      if (
+        refreshedStation?.bikes === null ||
+        refreshedStation?.bikes === undefined
+      ) {
+        throw new Error("Refreshed bike availability is missing.");
       }
-    }
-  }, [applyRealtimeStations, fetchRealtimeStations, liveBikeStatus, showNotice]);
+
+      return {
+        availableBikes: refreshedStation.bikes,
+        replanIfUnavailable: () => applyRealtimeStations(updatedStations),
+      };
+    },
+    [applyRealtimeStations, fetchRealtimeStations],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -4148,12 +4133,6 @@ export default function Home() {
     mapLocationMode === "heading"
       ? (mapDeviceHeading ?? mapTravelHeading)
       : null;
-  const startStationAvailabilityLabel =
-    plan && liveBikeStatus === "ready" && plan.startStation.bikes !== null
-      ? `대여 가능 따릉이 ${plan.startStation.bikes}대`
-      : liveBikeStatus === "loading"
-        ? "실시간 대여 가능 수량 확인 중"
-        : "수량 미확인";
 
   return (
     <main className="app-shell">
@@ -4594,7 +4573,7 @@ export default function Home() {
                         <button
                           className="station-focus-button start-station-focus-button"
                           type="button"
-                          aria-label={`${plan.startStation.name} 출발 대여소를 지도에서 보기. ${startStationAvailabilityLabel}`}
+                          aria-label={`${plan.startStation.name} 출발 대여소를 지도에서 보기`}
                           onClick={() => focusMapPoint("startStation")}
                         >
                           <span className="station-title-copy">
@@ -4611,54 +4590,14 @@ export default function Home() {
                             {plan.startStation.address}
                           </span>
                         </button>
-                        <span className="station-availability-actions">
-                          <span
-                            className={`availability ${
-                              liveBikeStatus !== "ready" || plan.startStation.bikes === null
-                                ? "status-unlinked"
-                                : plan.startStation.bikes === 0
-                                  ? "bikes-empty"
-                                  : "bikes-live"
-                            }`}
-                            aria-hidden="true"
-                            title={
-                              liveBikeStatus === "unavailable"
-                                ? "현재 대여 가능 수량을 불러오지 못했어요."
-                                : undefined
-                            }
-                          >
-                            {liveBikeStatus === "ready" && plan.startStation.bikes !== null ? (
-                              <>
-                                <Bike size={13} aria-hidden="true" /> {plan.startStation.bikes}대
-                              </>
-                            ) : liveBikeStatus === "loading" ? (
-                              "현황 확인 중"
-                            ) : (
-                              "수량 미확인"
-                            )}
-                          </span>
-                          <button
-                            className="bike-availability-refresh"
-                            type="button"
-                            aria-label={`${plan.startStation.name} 잔여 대수 ${
-                              isLiveBikeRefreshing ? "새로고침 중" : "새로고침"
-                            }`}
-                            aria-busy={isLiveBikeRefreshing}
-                            disabled={
-                              liveBikeStatus === "loading" || isLiveBikeRefreshing
-                            }
-                            title="잔여 대수 새로고침"
-                            onClick={() =>
-                              refreshLiveBikeAvailability(plan.startStation.id)
-                            }
-                          >
-                            <RefreshCw
-                              className={isLiveBikeRefreshing ? "is-spinning" : undefined}
-                              size={15}
-                              aria-hidden="true"
-                            />
-                          </button>
-                        </span>
+                        <StartStationAvailabilityControl
+                          key={`${plan.startStation.id}:${liveBikeStatus}:${plan.startStation.bikes ?? "unknown"}`}
+                          stationId={plan.startStation.id}
+                          stationName={plan.startStation.name}
+                          initialBikes={plan.startStation.bikes}
+                          initialStatus={liveBikeStatus}
+                          loadFreshAvailability={loadFreshStartStationAvailability}
+                        />
                       </div>
                       <a
                         className="bike-seoul-rental-link"
@@ -4668,18 +4607,6 @@ export default function Home() {
                         <Bike size={14} aria-hidden="true" />
                         따릉이 대여하기
                       </a>
-                      <span
-                        className="screen-reader-only"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        {startStationAvailabilityLabel}
-                      </span>
-                      {liveBikeRefreshError?.stationId === plan.startStation.id ? (
-                        <p className="bike-availability-refresh-error" role="alert">
-                          {liveBikeRefreshError.message}
-                        </p>
-                      ) : null}
                       {plan.startStationAdjustedForAvailability ? (
                         <p className="start-station-adjustment-note" role="status">
                           현재 가장 가까운 정류소의 따릉이가 없어서 다른 최적의 대여소를

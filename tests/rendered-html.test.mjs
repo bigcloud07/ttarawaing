@@ -642,13 +642,20 @@ test("does not imply live return-station availability", async () => {
 });
 
 test("uses clear unavailable-data copy and exposes fallback route warnings", async () => {
-  const [pageSource, styles] = await Promise.all([
+  const [pageSource, controlSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/start-station-availability-control.tsx", import.meta.url),
+      "utf8",
+    ),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(pageSource, /수량 미확인/);
-  assert.doesNotMatch(pageSource, /현황 확인 필요|실시간 정보 없음/);
+  assert.match(controlSource, /수량 미확인/);
+  assert.doesNotMatch(
+    `${pageSource}\n${controlSource}`,
+    /현황 확인 필요|실시간 정보 없음/,
+  );
   assert.match(pageSource, /도로 경로를 불러오지 못해 전 구간을 직선거리로 예상했어요/);
   assert.match(pageSource, /className="route-geometry-warning" role="alert"/);
   assert.match(pageSource, /aria-selected=\{index === boundedActiveIndex\}/);
@@ -700,23 +707,42 @@ test("opens the Seoul Bike app from the recommended rental station card", async 
 });
 
 test("lets users refresh the recommended rental station bike count", async () => {
-  const [pageSource, styles] = await Promise.all([
+  const [pageSource, controlSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/start-station-availability-control.tsx", import.meta.url),
+      "utf8",
+    ),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(pageSource, /const refreshLiveBikeAvailability = useCallback/);
   assert.match(
     pageSource,
-    /fetchRealtimeStations\(\s*controller\.signal,\s*true,?\s*\)/,
+    /const loadFreshStartStationAvailability = useCallback/,
   );
-  assert.match(pageSource, /className="station-availability-actions"/);
   assert.match(
     pageSource,
-    /className="bike-availability-refresh"[\s\S]*?type="button"[\s\S]*?aria-busy=\{isLiveBikeRefreshing\}[\s\S]*?refreshLiveBikeAvailability\(plan\.startStation\.id\)/,
+    /fetchRealtimeStations\(signal, true\)/,
   );
-  assert.match(pageSource, /잔여 대수를 새로고침했어요/);
-  assert.match(pageSource, /잔여 대수를 새로고침하지 못했어요/);
+  assert.match(
+    pageSource,
+    /<StartStationAvailabilityControl[\s\S]*?loadFreshAvailability=\{loadFreshStartStationAvailability\}/,
+  );
+  assert.doesNotMatch(pageSource, /setIsLiveBikeRefreshing/);
+  assert.doesNotMatch(pageSource, /setLiveBikeRefreshError/);
+  assert.match(controlSource, /memo\(\s*function StartStationAvailabilityControl/);
+  assert.match(controlSource, /const \[state, dispatch\] = useReducer/);
+  assert.match(controlSource, /className="station-availability-actions"/);
+  assert.match(
+    controlSource,
+    /className="bike-availability-refresh"[\s\S]*?aria-busy=\{state\.isRefreshing\}[\s\S]*?onClick=\{refreshAvailability\}/,
+  );
+  assert.match(controlSource, /replanIfBikeStationUnavailable\(/);
+  assert.match(
+    controlSource,
+    /abortBikeAvailabilityRefresh\(refreshAbortControllerRef\.current\)/,
+  );
+  assert.match(controlSource, /잔여 대수를 새로고침하지 못했어요/);
   assert.match(
     styles,
     /\.bike-availability-refresh\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s,
