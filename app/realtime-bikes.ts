@@ -6,6 +6,7 @@ export type RealtimeBikeAvailability = {
 export type RealtimeBikeFetchOptions = {
   fetchImpl?: typeof fetch;
   attemptTimeoutMs?: number;
+  fresh?: boolean;
 };
 
 const BIKE_SEOUL_REALTIME_URL =
@@ -107,8 +108,12 @@ export async function fetchRealtimeBikeAvailability(
   {
     fetchImpl = fetch,
     attemptTimeoutMs = REALTIME_BIKE_ATTEMPT_TIMEOUT_MS,
+    fresh = false,
   }: RealtimeBikeFetchOptions = {},
 ) {
+  const proxyUrl = fresh
+    ? "/api/bike-stations/realtime?fresh=1"
+    : "/api/bike-stations/realtime";
   const requests = [
     (requestSignal: AbortSignal) =>
       fetchImpl(BIKE_SEOUL_REALTIME_URL, {
@@ -118,11 +123,16 @@ export async function fetchRealtimeBikeAvailability(
           "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
         },
         body: new URLSearchParams({ stationGrpSeq: "ALL" }),
+        cache: fresh ? "no-store" : "default",
         signal: requestSignal,
       }),
     (requestSignal: AbortSignal) =>
-      fetchImpl("/api/bike-stations/realtime", {
-        headers: { Accept: "application/json" },
+      fetchImpl(proxyUrl, {
+        cache: fresh ? "no-store" : "default",
+        headers: {
+          Accept: "application/json",
+          ...(fresh ? { "Cache-Control": "no-cache" } : {}),
+        },
         signal: requestSignal,
       }),
   ];

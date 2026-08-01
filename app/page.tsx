@@ -2909,9 +2909,15 @@ export default function Home() {
   const [stations, setStations] = useState(STATIONS);
   const stationsRef = useRef(stations);
   const liveBikeUpdatedAtRef = useRef<number | null>(null);
+  const liveBikeRefreshAbortControllerRef = useRef<AbortController | null>(null);
   const [liveBikeStatus, setLiveBikeStatus] = useState<
     "loading" | "ready" | "unavailable"
   >("loading");
+  const [isLiveBikeRefreshing, setIsLiveBikeRefreshing] = useState(false);
+  const [liveBikeRefreshError, setLiveBikeRefreshError] = useState<{
+    stationId: string;
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     stationsRef.current = stations;
@@ -2952,6 +2958,7 @@ export default function Home() {
       originLocationRequestGateRef.current.invalidate();
       nearbyLocationRequestGateRef.current.invalidate();
       nearbyLookupAbortControllerRef.current?.abort();
+      liveBikeRefreshAbortControllerRef.current?.abort();
     },
     [],
   );
@@ -2997,24 +3004,28 @@ export default function Home() {
     return () => window.clearTimeout(timeoutId);
   }, []);
 
-  const fetchRealtimeStations = useCallback(async (signal: AbortSignal) => {
-    const realtimeAvailability = await fetchRealtimeBikeAvailability(signal);
-    const availabilityById = new Map<string, number>();
-    for (const station of realtimeAvailability) {
-      availabilityById.set(station.id, station.availableBikes);
-    }
+  const fetchRealtimeStations = useCallback(
+    async (signal: AbortSignal, fresh = false) => {
+      const realtimeAvailability = await fetchRealtimeBikeAvailability(signal, {
+        fresh,
+      });
+      const availabilityById = new Map<string, number>();
+      for (const station of realtimeAvailability) {
+        availabilityById.set(station.id, station.availableBikes);
+      }
 
-    const minimumRealtimeStationCount = Math.floor(STATIONS.length * 0.98);
-    if (availabilityById.size < minimumRealtimeStationCount) {
-      throw new Error("Realtime bike station data is incomplete.");
-    }
+      const minimumRealtimeStationCount = Math.floor(STATIONS.length * 0.98);
+      if (availabilityById.size < minimumRealtimeStationCount) {
+        throw new Error("Realtime bike station data is incomplete.");
+      }
 
-    const updatedStations = STATIONS.map((station) => ({
-      ...station,
-      bikes: availabilityById.get(station.id) ?? null,
-    }));
-    return updatedStations;
-  }, []);
+      return STATIONS.map((station) => ({
+        ...station,
+        bikes: availabilityById.get(station.id) ?? null,
+      }));
+    },
+    [],
+  );
 
   const applyRealtimeStations = useCallback((updatedStations: Station[]) => {
     stationsRef.current = updatedStations;
@@ -3022,6 +3033,43 @@ export default function Home() {
     setStations(updatedStations);
     setLiveBikeStatus("ready");
   }, []);
+
+  const refreshLiveBikeAvailability = useCallback(async (stationId: string) => {
+    if (
+      liveBikeStatus === "loading" ||
+      liveBikeRefreshAbortControllerRef.current
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    liveBikeRefreshAbortControllerRef.current = controller;
+    setIsLiveBikeRefreshing(true);
+    setLiveBikeRefreshError(null);
+
+    try {
+      const updatedStations = await fetchRealtimeStations(
+        controller.signal,
+        true,
+      );
+      if (controller.signal.aborted) return;
+      applyRealtimeStations(updatedStations);
+      showNotice("잔여 대수를 새로고침했어요.", 2_600);
+    } catch {
+      if (controller.signal.aborted) return;
+      if (liveBikeStatus !== "ready") setLiveBikeStatus("unavailable");
+      setLiveBikeRefreshError({
+        stationId,
+        message:
+          "잔여 대수를 새로고침하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      });
+    } finally {
+      if (liveBikeRefreshAbortControllerRef.current === controller) {
+        liveBikeRefreshAbortControllerRef.current = null;
+        setIsLiveBikeRefreshing(false);
+      }
+    }
+  }, [applyRealtimeStations, fetchRealtimeStations, liveBikeStatus, showNotice]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -3063,6 +3111,7 @@ export default function Home() {
   const transferStops = routeRecommendation?.transferStops ?? EMPTY_STATIONS;
   const bikeLegs = routeRecommendation?.bikeLegs ?? EMPTY_BIKE_LEGS;
   const passRouteStatus = routeRecommendation?.passStatus ?? "loading";
+
   const plannedRouteLegs = useMemo(
     () =>
       routeRecommendation
@@ -4541,13 +4590,13 @@ export default function Home() {
                   <li className="timeline-station">
                     <span className="station-number">1</span>
                     <div className="station-card-copy">
-                      <button
-                        className="station-focus-button"
-                        type="button"
-                        aria-label={`${plan.startStation.name} 출발 대여소를 지도에서 보기. ${startStationAvailabilityLabel}`}
-                        onClick={() => focusMapPoint("startStation")}
-                      >
-                        <span className="station-title-line">
+                      <div className="start-station-card-header">
+                        <button
+                          className="station-focus-button start-station-focus-button"
+                          type="button"
+                          aria-label={`${plan.startStation.name} 출발 대여소를 지도에서 보기. ${startStationAvailabilityLabel}`}
+                          onClick={() => focusMapPoint("startStation")}
+                        >
                           <span className="station-title-copy">
                             <small>
                               {plan.startStationAdjustedForAvailability
@@ -4558,6 +4607,11 @@ export default function Home() {
                             </small>
                             <strong>{plan.startStation.name}</strong>
                           </span>
+                          <span className="station-address">
+                            {plan.startStation.address}
+                          </span>
+                        </button>
+                        <span className="station-availability-actions">
                           <span
                             className={`availability ${
                               liveBikeStatus !== "ready" || plan.startStation.bikes === null
@@ -4583,9 +4637,29 @@ export default function Home() {
                               "수량 미확인"
                             )}
                           </span>
+                          <button
+                            className="bike-availability-refresh"
+                            type="button"
+                            aria-label={`${plan.startStation.name} 잔여 대수 ${
+                              isLiveBikeRefreshing ? "새로고침 중" : "새로고침"
+                            }`}
+                            aria-busy={isLiveBikeRefreshing}
+                            disabled={
+                              liveBikeStatus === "loading" || isLiveBikeRefreshing
+                            }
+                            title="잔여 대수 새로고침"
+                            onClick={() =>
+                              refreshLiveBikeAvailability(plan.startStation.id)
+                            }
+                          >
+                            <RefreshCw
+                              className={isLiveBikeRefreshing ? "is-spinning" : undefined}
+                              size={15}
+                              aria-hidden="true"
+                            />
+                          </button>
                         </span>
-                        <span className="station-address">{plan.startStation.address}</span>
-                      </button>
+                      </div>
                       <a
                         className="bike-seoul-rental-link"
                         href="bikeseoul://action"
@@ -4601,6 +4675,11 @@ export default function Home() {
                       >
                         {startStationAvailabilityLabel}
                       </span>
+                      {liveBikeRefreshError?.stationId === plan.startStation.id ? (
+                        <p className="bike-availability-refresh-error" role="alert">
+                          {liveBikeRefreshError.message}
+                        </p>
+                      ) : null}
                       {plan.startStationAdjustedForAvailability ? (
                         <p className="start-station-adjustment-note" role="status">
                           현재 가장 가까운 정류소의 따릉이가 없어서 다른 최적의 대여소를

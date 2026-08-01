@@ -60,6 +60,27 @@ test("상위 요청 취소는 다음 실시간 소스를 호출하지 않고 즉
   assert.equal(calls, 1);
 });
 
+test("사용자 새로고침은 프록시와 브라우저 캐시를 우회한다", async () => {
+  const calls = [];
+  const availability = await fetchRealtimeBikeAvailability(
+    new AbortController().signal,
+    {
+      fresh: true,
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), init });
+        if (calls.length === 1) return Response.json({ realtimeList: [] });
+        return Response.json(completeStationPayload());
+      },
+    },
+  );
+
+  assert.equal(availability.length, 2_700);
+  assert.equal(calls[0].init?.cache, "no-store");
+  assert.equal(calls[1].url, "/api/bike-stations/realtime?fresh=1");
+  assert.equal(calls[1].init?.cache, "no-store");
+  assert.equal(calls[1].init?.headers["Cache-Control"], "no-cache");
+});
+
 test("공식 응답의 일반·QR·새싹 따릉이 수를 합산하고 0대도 보존한다", () => {
   assert.deepEqual(
     normalizeRealtimeBikeAvailability({

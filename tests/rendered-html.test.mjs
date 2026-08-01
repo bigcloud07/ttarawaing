@@ -699,6 +699,35 @@ test("opens the Seoul Bike app from the recommended rental station card", async 
   );
 });
 
+test("lets users refresh the recommended rental station bike count", async () => {
+  const [pageSource, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(pageSource, /const refreshLiveBikeAvailability = useCallback/);
+  assert.match(
+    pageSource,
+    /fetchRealtimeStations\(\s*controller\.signal,\s*true,?\s*\)/,
+  );
+  assert.match(pageSource, /className="station-availability-actions"/);
+  assert.match(
+    pageSource,
+    /className="bike-availability-refresh"[\s\S]*?type="button"[\s\S]*?aria-busy=\{isLiveBikeRefreshing\}[\s\S]*?refreshLiveBikeAvailability\(plan\.startStation\.id\)/,
+  );
+  assert.match(pageSource, /잔여 대수를 새로고침했어요/);
+  assert.match(pageSource, /잔여 대수를 새로고침하지 못했어요/);
+  assert.match(
+    styles,
+    /\.bike-availability-refresh\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s,
+  );
+  assert.match(styles, /\.bike-availability-refresh:focus-visible\s*\{/);
+  assert.match(
+    styles,
+    /\.bike-availability-refresh \.is-spinning\s*\{[^}]*animation:\s*spin/s,
+  );
+});
+
 test("uses full start and destination labels on both map providers", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -1620,7 +1649,19 @@ test("normalizes the official Seoul Bike realtime station response", async () =>
     assert.equal(payload.stations.length, 2_701);
     assert.deepEqual(payload.stations[0], { id: "1", availableBikes: 4 });
     assert.match(response.headers.get("cache-control") ?? "", /max-age=20/);
-    assert.equal(calls, 2);
+
+    const freshResponse = await worker.fetch(
+      new Request("http://localhost/api/bike-stations/realtime?fresh=1"),
+      {},
+      {
+        waitUntil() {},
+        passThroughOnException() {},
+      },
+    );
+
+    assert.equal(freshResponse.status, 200);
+    assert.equal(freshResponse.headers.get("cache-control"), "no-store");
+    assert.equal(calls, 3);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -452,6 +452,7 @@ const worker = {
       }
 
       try {
+        const fresh = url.searchParams.get("fresh") === "1";
         const upstream = await requestBikeSeoulRealtime({
           signal: request.signal,
         });
@@ -475,7 +476,9 @@ const worker = {
           { updatedAt: new Date().toISOString(), stations },
           {
             headers: {
-              "Cache-Control": "public, max-age=20, stale-while-revalidate=90",
+              "Cache-Control": fresh
+                ? "no-store"
+                : "public, max-age=20, stale-while-revalidate=90",
               "X-Content-Type-Options": "nosniff",
             },
           },

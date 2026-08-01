@@ -28,6 +28,7 @@ function parseStation(value: unknown) {
 
 export async function GET(request: Request) {
   try {
+    const fresh = new URL(request.url).searchParams.get("fresh") === "1";
     const upstream = await requestBikeSeoulRealtime({
       signal: request.signal,
       headers: {
@@ -55,7 +56,9 @@ export async function GET(request: Request) {
       { updatedAt: new Date().toISOString(), stations },
       {
         headers: {
-          "Cache-Control": "public, max-age=20, stale-while-revalidate=90",
+          "Cache-Control": fresh
+            ? "no-store"
+            : "public, max-age=20, stale-while-revalidate=90",
           "X-Content-Type-Options": "nosniff",
         },
       },
