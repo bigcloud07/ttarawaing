@@ -68,7 +68,7 @@
 | 경로 계산 | Kakao Maps 도보·자전거 REST API                       |
 | 서버      | vinext, Cloudflare Workers                            |
 | 데이터    | 서울시 공공자전거 대여소 정보, 서울자전거 실시간 현황 |
-| 방문 분석 | Vercel Web Analytics                                  |
+| 방문 분석 | Vercel Web Analytics, PostHog Product Analytics       |
 | 테스트    | Node.js Test Runner, ESLint                           |
 
 ## 방문 분석
@@ -83,6 +83,28 @@
 분석은 기능을 배포한 이후의 방문부터 수집하며 과거 데이터는 소급하지 않습니다. 방문자 값은 하루마다 초기화되는 익명 식별값을 기준으로 하므로, 여러 날에 걸친 고유 사용자 수가 아니라 **일별 익명 방문자 수**로 해석해야 합니다.
 
 분석 스크립트에는 검색어, 장소명, 주소, 대여소 정보, GPS 좌표와 경로 데이터가 전달되지 않습니다. URL의 query와 hash도 전송 전에 제거합니다. 로컬 개발 환경과 별도 Sites 배포에서는 중복 집계를 막기 위해 이 분석 스크립트를 실행하지 않으며, 방문 통계는 대표 Vercel 주소로 유입을 통일해 확인합니다.
+
+### 제품 퍼널 분석
+
+PostHog 프로젝트 토큰을 설정하면 다음 익명 행동을 하나의 제품 퍼널로 확인할 수 있습니다.
+
+1. 서비스 진입
+2. 출발지·도착지 선택 완료
+3. 최적 경로 검색 시작
+4. 경로 결과 확인 또는 입력 검증 실패
+5. `따릉이 대여하기` 딥링크 클릭
+
+가까운 출발·반납 대여소 검색과 잔여 자전거 새로고침도 별도 이벤트로 측정합니다. 검색어, 장소명, 주소, 대여소명, 위도·경도와 실제 경로 좌표는 수집하지 않습니다. 거리·소요시간·자전거 수량은 범위로 구간화하며, IP 기반 위치 추정·자동 클릭 수집·세션 녹화·히트맵·예외 수집은 비활성화합니다. 같은 브라우저의 익명 퍼널을 연결하기 위한 무작위 식별자는 로컬 저장소에 유지되며, 기본 브라우저·기기 정보와 함께 개인을 직접 식별하지 않는 형태로 수집됩니다. 브라우저의 Do Not Track 설정도 존중합니다.
+
+PostHog 분석을 활성화하려면 배포 환경에 다음 변수를 설정한 뒤 다시 빌드합니다.
+
+```dotenv
+NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=your_project_token
+NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+NEXT_PUBLIC_POSTHOG_ALLOWED_HOSTS=ttarawaing.vercel.app,ttarawaing.dnsxo0712.chatgpt.site
+```
+
+EU 리전 프로젝트는 `NEXT_PUBLIC_POSTHOG_HOST`에 `https://eu.i.posthog.com`을 사용합니다. 허용 호스트를 설정하면 목록에 포함된 서비스에서만 이벤트를 전송합니다.
 
 ## 데이터와 추천 방식
 
@@ -106,6 +128,9 @@ npm install
 ```dotenv
 KAKAO_JAVASCRIPT_KEY=your_javascript_key
 KAKAO_REST_API_KEY=your_rest_api_key
+NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=your_project_token
+NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+NEXT_PUBLIC_POSTHOG_ALLOWED_HOSTS=localhost
 ```
 
 개발 서버를 실행합니다.

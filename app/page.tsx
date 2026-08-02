@@ -118,6 +118,16 @@ import {
   shouldSuppressMobileRouteSheetClick,
 } from "./mobile-route-sheet";
 import {
+  bucketBikeCount,
+  bucketDistanceMeters,
+  bucketDurationMinutes,
+  bucketElapsedMilliseconds,
+  bucketTransferCount,
+  createAnalyticsAttemptId,
+  trackProductEvent,
+} from "./product-analytics";
+import type { RouteSearchSource } from "./product-analytics";
+import {
   getDraggedOverlayPoint,
   hasMeaningfulOverlayDrag,
 } from "./kakao-overlay-drag";
@@ -189,6 +199,7 @@ type CommitRouteOptions = {
   remember?: boolean;
   expandMobileDetails?: boolean;
   preserveEndpointMoveRequests?: boolean;
+  analyticsSource?: RouteSearchSource;
 };
 
 type RouteRecommendation = {
@@ -199,6 +210,13 @@ type RouteRecommendation = {
   transferStops: Station[];
   bikeLegs: BikeRouteLeg[];
   passStatus: PassRouteStatus;
+};
+
+type RouteAnalyticsAttempt = {
+  id: string;
+  source: RouteSearchSource;
+  startedAt: number;
+  completed: boolean;
 };
 
 type MapFocusTarget = "origin" | "startStation" | "endStation" | "destination";
@@ -2846,6 +2864,8 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const noticeTimerRef = useRef<number | null>(null);
   const completedRouteNoticeKeyRef = useRef<string | null>(null);
+  const routeAnalyticsAttemptRef = useRef<RouteAnalyticsAttempt | null>(null);
+  const trackedEndpointSelectionKeyRef = useRef<string | null>(null);
   const originLocationRequestGateRef = useRef(createLatestRequestGate());
   const nearbyLocationRequestGateRef = useRef(createLatestRequestGate());
   const nearbyLookupAbortControllerRef = useRef<AbortController | null>(null);
@@ -2921,6 +2941,21 @@ export default function Home() {
     stationsRef.current = stations;
   }, [stations]);
 
+  useEffect(() => {
+    trackProductEvent("core_view", { surface: "route_planner" });
+  }, []);
+
+  useEffect(() => {
+    if (!origin || !destination) return;
+    const selectionKey = `${origin.id}|${destination.id}`;
+    if (trackedEndpointSelectionKeyRef.current === selectionKey) return;
+    trackedEndpointSelectionKeyRef.current = selectionKey;
+    trackProductEvent("endpoints_selected", {
+      uses_current_location:
+        origin.id === "current-location" || destination.id === "current-location",
+    });
+  }, [destination, origin]);
+
   const showNotice = useCallback((message: string, durationMs?: number) => {
     if (noticeTimerRef.current !== null) {
       window.clearTimeout(noticeTimerRef.current);
@@ -2986,6 +3021,8 @@ export default function Home() {
           origin: activeRoute.origin,
           destination: activeRoute.destination,
         };
+        trackedEndpointSelectionKeyRef.current =
+          `${restoredRoute.origin.id}|${restoredRoute.destination.id}`;
         setOrigin(restoredRoute.origin);
         setDestination(restoredRoute.destination);
         setOriginQuery(restoredRoute.origin.name);
@@ -3156,6 +3193,43 @@ export default function Home() {
     showNotice("가장 편한 따릉이 경로를 찾았어요.", 2_800);
   }, [committedRoute, routeRecommendation, showNotice]);
 
+  useEffect(() => {
+    const attempt = routeAnalyticsAttemptRef.current;
+    if (
+      !attempt ||
+      attempt.completed ||
+      !routeRecommendation ||
+      routeRecommendation.geometryStatus === "loading" ||
+      routeRecommendation.passStatus === "loading"
+    ) {
+      return;
+    }
+
+    attempt.completed = true;
+    trackProductEvent("route_search_succeeded", {
+      search_attempt_id: attempt.id,
+      source: attempt.source,
+      geometry_quality: routeRecommendation.geometryStatus,
+      pass_status: routeRecommendation.passStatus,
+      transfer_count_bucket: bucketTransferCount(
+        routeRecommendation.transferStops.length,
+      ),
+      distance_bucket: bucketDistanceMeters(
+        routeRecommendation.plan.totalMeters,
+      ),
+      duration_bucket: bucketDurationMinutes(
+        routeRecommendation.plan.totalMinutes,
+      ),
+      elapsed_bucket: bucketElapsedMilliseconds(
+        performance.now() - attempt.startedAt,
+      ),
+      start_station_adjusted:
+        routeRecommendation.plan.startStationAdjustedForAvailability,
+      start_station_optimized:
+        routeRecommendation.plan.startStationOptimizedForTotalRoute,
+    });
+  }, [routeRecommendation]);
+
   const choosePassType = useCallback(
     (nextPassType: PassType) => {
       if (nextPassType === passType) return;
@@ -3220,6 +3294,26 @@ export default function Home() {
     });
   }, []);
 
+  const startRouteAnalyticsAttempt = useCallback(
+    (source: RouteSearchSource) => {
+      const attempt: RouteAnalyticsAttempt = {
+        id: createAnalyticsAttemptId(),
+        source,
+        startedAt: performance.now(),
+        completed: false,
+      };
+      routeAnalyticsAttemptRef.current = attempt;
+      trackProductEvent("route_search_started", {
+        search_attempt_id: attempt.id,
+        source,
+        pass_type: passType,
+        bike_road_priority: preferBikeRoads,
+      });
+      return attempt;
+    },
+    [passType, preferBikeRoads],
+  );
+
   const commitRoute = useCallback(
     (
       nextOrigin?: Place | null,
@@ -3228,12 +3322,33 @@ export default function Home() {
     ) => {
       const resolvedOrigin = nextOrigin ?? origin;
       const resolvedDestination = nextDestination ?? destination;
+      const analyticsAttempt = options.analyticsSource
+        ? startRouteAnalyticsAttempt(options.analyticsSource)
+        : null;
 
       if (!resolvedOrigin || !resolvedDestination) {
+        if (analyticsAttempt) {
+          analyticsAttempt.completed = true;
+          trackProductEvent("route_search_failed", {
+            search_attempt_id: analyticsAttempt.id,
+            source: analyticsAttempt.source,
+            stage: "validation",
+            reason: "missing_endpoint",
+          });
+        }
         setErrorMessage("출발지와 도착지를 검색 결과에서 선택해 주세요.");
         return false;
       }
       if (resolvedOrigin.id === resolvedDestination.id) {
+        if (analyticsAttempt) {
+          analyticsAttempt.completed = true;
+          trackProductEvent("route_search_failed", {
+            search_attempt_id: analyticsAttempt.id,
+            source: analyticsAttempt.source,
+            stage: "validation",
+            reason: "same_endpoint",
+          });
+        }
         setErrorMessage("서로 다른 출발지와 도착지를 선택해 주세요.");
         return false;
       }
@@ -3277,11 +3392,12 @@ export default function Home() {
       passType,
       preferBikeRoads,
       rememberRoute,
+      startRouteAnalyticsAttempt,
     ],
   );
 
   const findRoute = useCallback(() => {
-    if (!commitRoute()) return;
+    if (!commitRoute(undefined, undefined, { analyticsSource: "form" })) return;
     pendingResultFocusRef.current = true;
     setResultFocusRequestId((requestId) => requestId + 1);
   }, [commitRoute]);
@@ -3582,6 +3698,7 @@ export default function Home() {
         remember: false,
         expandMobileDetails: false,
         preserveEndpointMoveRequests: true,
+        analyticsSource: "map_drag",
       });
       if (!committed) {
         showNotice("");
@@ -3887,6 +4004,35 @@ export default function Home() {
   const lookupNearbyStation = useCallback(
     (kind: NearbyStationKind) => {
       cancelNearbyStationLookup();
+      const searchAttemptId = createAnalyticsAttemptId();
+      const startedAt = performance.now();
+      let outcomeTracked = false;
+      const trackNearbyFailure = (
+        reason:
+          | "no_available"
+          | "no_stations"
+          | "permission_denied"
+          | "timeout"
+          | "location_error"
+          | "unsupported"
+          | "route_error",
+      ) => {
+        if (outcomeTracked) return;
+        outcomeTracked = true;
+        trackProductEvent("nearby_station_failed", {
+          search_attempt_id: searchAttemptId,
+          kind,
+          reason,
+          elapsed_bucket: bucketElapsedMilliseconds(
+            performance.now() - startedAt,
+          ),
+        });
+      };
+      trackProductEvent("nearby_station_requested", {
+        search_attempt_id: searchAttemptId,
+        kind,
+        bike_route_priority: preferBikeRoads,
+      });
       const controller = new AbortController();
       nearbyLookupAbortControllerRef.current = controller;
       setNearbyStationLookupKind(kind);
@@ -3976,12 +4122,14 @@ export default function Home() {
 
           if (!isCurrentRequest()) return;
           if (result.status === "no-available") {
+            trackNearbyFailure("no_available");
             setNearbyStationError(
               "현재 대여 가능한 따릉이를 찾지 못했어요. 잠시 후 다시 시도해 주세요.",
             );
             return;
           }
           if (result.status === "no-stations") {
+            trackNearbyFailure("no_stations");
             setNearbyStationError("주변에서 따릉이 대여소를 찾지 못했어요.");
             return;
           }
@@ -4000,6 +4148,22 @@ export default function Home() {
             availability === "confirmed" &&
             straightNearestStation?.bikes === 0 &&
             straightNearestStation.id !== result.station.id;
+
+          outcomeTracked = true;
+          trackProductEvent("nearby_station_succeeded", {
+            search_attempt_id: searchAttemptId,
+            kind,
+            route_quality: result.routeStatus,
+            availability_status: availability,
+            adjusted_for_availability: adjustedForAvailability,
+            distance_bucket: bucketDistanceMeters(result.route.distanceMeters),
+            duration_bucket: bucketDurationMinutes(
+              result.route.durationSeconds / 60,
+            ),
+            elapsed_bucket: bucketElapsedMilliseconds(
+              performance.now() - startedAt,
+            ),
+          });
 
           setMapUserLocation(currentLocation);
           setMapFocusRequest(null);
@@ -4025,6 +4189,7 @@ export default function Home() {
           ) {
             return;
           }
+          trackNearbyFailure("route_error");
           setNearbyStationError(
             "대여소까지의 경로를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
           );
@@ -4045,6 +4210,13 @@ export default function Home() {
         },
         onError: (error) => {
           if (!isCurrentRequest()) return;
+          trackNearbyFailure(
+            error.code === error.PERMISSION_DENIED
+              ? "permission_denied"
+              : error.code === error.TIMEOUT
+                ? "timeout"
+                : "location_error",
+          );
           nearbyLookupAbortControllerRef.current = null;
           setNearbyStationLookupStatus("idle");
           setNearbyStationLookupKind(null);
@@ -4058,6 +4230,7 @@ export default function Home() {
         },
         onUnsupported: () => {
           if (!isCurrentRequest()) return;
+          trackNearbyFailure("unsupported");
           nearbyLookupAbortControllerRef.current = null;
           setNearbyStationLookupStatus("idle");
           setNearbyStationLookupKind(null);
@@ -4387,7 +4560,11 @@ export default function Home() {
                           key={routeHistoryKey(route)}
                           aria-label={`${route.origin.name}에서 ${route.destination.name} 경로 다시 보기`}
                           title={label}
-                          onClick={() => commitRoute(route.origin, route.destination)}
+                          onClick={() =>
+                            commitRoute(route.origin, route.destination, {
+                              analyticsSource: "history",
+                            })
+                          }
                         >
                           {label}
                         </button>
@@ -4603,6 +4780,22 @@ export default function Home() {
                         className="bike-seoul-rental-link"
                         href="bikeseoul://action"
                         aria-label={`따릉이 앱을 열어 ${plan.startStation.name}에서 대여하기`}
+                        onClick={() => {
+                          const attempt = routeAnalyticsAttemptRef.current;
+                          trackProductEvent("bike_deeplink_clicked", {
+                            search_attempt_id: attempt?.id ?? null,
+                            source: attempt?.source ?? "restored",
+                            availability_status:
+                              liveBikeStatus === "ready"
+                                ? "confirmed"
+                                : "unknown",
+                            bikes_bucket: bucketBikeCount(
+                              plan.startStation.bikes,
+                            ),
+                            geometry_quality:
+                              routeRecommendation?.geometryStatus ?? "loading",
+                          }, { immediate: true });
+                        }}
                       >
                         <Bike size={14} aria-hidden="true" />
                         따릉이 대여하기

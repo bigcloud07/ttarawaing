@@ -9,6 +9,11 @@ import {
   replanIfBikeStationUnavailable,
 } from "./bike-availability-refresh-state";
 import type { BikeAvailabilityStatus } from "./bike-availability-refresh-state";
+import {
+  bucketBikeCount,
+  bucketElapsedMilliseconds,
+  trackProductEvent,
+} from "./product-analytics";
 
 export type BikeAvailabilityRefreshResult = {
   availableBikes: number;
@@ -66,6 +71,7 @@ export const StartStationAvailabilityControl = memo(
       if (state.status === "loading" || state.isRefreshing) return;
 
       const controller = new AbortController();
+      const startedAt = performance.now();
       refreshAbortControllerRef.current = controller;
       dispatch({ type: "refresh-start" });
 
@@ -79,10 +85,18 @@ export const StartStationAvailabilityControl = memo(
           announcement: `${stationName} 대여 가능 따릉이가 ${result.availableBikes}대로 새로고침됐어요.`,
         });
 
-        replanIfBikeStationUnavailable(
+        const recommendationChanged = replanIfBikeStationUnavailable(
           result.availableBikes,
           result.replanIfUnavailable,
         );
+        trackProductEvent("availability_refreshed", {
+          outcome: "success",
+          bikes_bucket: bucketBikeCount(result.availableBikes),
+          recommendation_changed: recommendationChanged,
+          elapsed_bucket: bucketElapsedMilliseconds(
+            performance.now() - startedAt,
+          ),
+        });
       } catch (error: unknown) {
         if (
           controller.signal.aborted ||
@@ -90,6 +104,14 @@ export const StartStationAvailabilityControl = memo(
         ) {
           return;
         }
+        trackProductEvent("availability_refreshed", {
+          outcome: "failure",
+          bikes_bucket: bucketBikeCount(state.bikes),
+          recommendation_changed: false,
+          elapsed_bucket: bucketElapsedMilliseconds(
+            performance.now() - startedAt,
+          ),
+        });
         dispatch({ type: "refresh-failure", message: REFRESH_ERROR_MESSAGE });
       } finally {
         if (refreshAbortControllerRef.current === controller) {
@@ -98,6 +120,7 @@ export const StartStationAvailabilityControl = memo(
       }
     }, [
       loadFreshAvailability,
+      state.bikes,
       state.isRefreshing,
       state.status,
       stationId,

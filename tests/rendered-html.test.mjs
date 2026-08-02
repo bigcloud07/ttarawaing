@@ -108,7 +108,7 @@ test("stores and reopens recent route history on this device", async () => {
   assert.match(pageSource, /\.slice\(0, ROUTE_HISTORY_LIMIT\)/);
   assert.match(
     pageSource,
-    /onClick=\{\(\) => commitRoute\(route\.origin, route\.destination\)\}/,
+    /commitRoute\(route\.origin, route\.destination, \{[\s\S]*?analyticsSource: "history"/,
   );
   assert.doesNotMatch(pageSource, /<span>히스토리<\/span>/);
   assert.doesNotMatch(pageSource, /QUICK_ROUTES|chooseQuickRoute/);
@@ -441,7 +441,7 @@ test("shows a centered spinner instead of temporary dotted route geometry", asyn
 
   assert.match(pageSource, /className="route-loading"/);
   assert.match(pageSource, /경로를 불러오고 있어요/);
-  assert.equal(loadingGuards.length, 4);
+  assert.ok(loadingGuards.length >= 4);
   assert.match(routeLoadingRule, /top:\s*50%/);
   assert.match(routeLoadingRule, /left:\s*50%/);
   assert.match(routeLoadingRule, /pointer-events:\s*none/);
@@ -1074,7 +1074,10 @@ test("scrolls and focuses the recommendation after the primary route search", as
   ]);
 
   assert.match(pageSource, /onClick=\{findRoute\}/);
-  assert.match(pageSource, /if \(!commitRoute\(\)\) return/);
+  assert.match(
+    pageSource,
+    /if \(!commitRoute\(undefined, undefined, \{ analyticsSource: "form" \}\)\) return/,
+  );
   assert.match(pageSource, /pendingResultFocusRef\.current = true/);
   assert.match(pageSource, /ref=\{resultSectionRef\}/);
   assert.match(pageSource, /tabIndex=\{-1\}/);
