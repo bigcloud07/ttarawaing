@@ -91,6 +91,10 @@ import {
 } from "./nearby-station-map";
 import { readStoredValue, writeStoredValue } from "./safe-storage";
 import {
+  openSeoulBikeApp,
+  SEOUL_BIKE_INSTALL_GUIDE_URL,
+} from "./seoul-bike-app";
+import {
   createLatestRequestGate,
   requestCurrentPositionOnce,
 } from "./current-location-request";
@@ -2865,6 +2869,8 @@ export default function Home() {
   const noticeTimerRef = useRef<number | null>(null);
   const completedRouteNoticeKeyRef = useRef<string | null>(null);
   const routeAnalyticsAttemptRef = useRef<RouteAnalyticsAttempt | null>(null);
+  const cancelBikeAppLaunchRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelBikeAppLaunchRef.current?.(), []);
   const trackedEndpointSelectionKeyRef = useRef<string | null>(null);
   const originLocationRequestGateRef = useRef(createLatestRequestGate());
   const nearbyLocationRequestGateRef = useRef(createLatestRequestGate());
@@ -4778,9 +4784,12 @@ export default function Home() {
                       </div>
                       <a
                         className="bike-seoul-rental-link"
-                        href="bikeseoul://action"
+                        href={SEOUL_BIKE_INSTALL_GUIDE_URL}
                         aria-label={`따릉이 앱을 열어 ${plan.startStation.name}에서 대여하기`}
-                        onClick={() => {
+                        onClick={(event) => {
+                          event.preventDefault();
+                          cancelBikeAppLaunchRef.current?.();
+                          cancelBikeAppLaunchRef.current = openSeoulBikeApp(window);
                           const attempt = routeAnalyticsAttemptRef.current;
                           trackProductEvent("bike_deeplink_clicked", {
                             search_attempt_id: attempt?.id ?? null,
