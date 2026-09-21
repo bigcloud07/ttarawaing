@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getSeoulBikeAppLinks,
   openSeoulBikeApp,
+  startSeoulBikeRental,
   SEOUL_BIKE_APP_URL,
   SEOUL_BIKE_APP_STORE_URL,
   SEOUL_BIKE_PLAY_STORE_URL,
@@ -49,6 +50,29 @@ test("Android launches the official package with a Google Play fallback", () => 
   assert.match(links.app, /package=com\.dki\.spb_android;/);
   const fallback = links.app.match(/S\.browser_fallback_url=([^;]+)/)[1];
   assert.equal(decodeURIComponent(fallback), SEOUL_BIKE_PLAY_STORE_URL);
+});
+
+test("iOS rental shows installation guidance without probing a scheme or starting a redirect timer", () => {
+  for (const [userAgent, maxTouchPoints] of [["iPhone", 5], ["iPad", 5], ["Macintosh", 5]]) {
+    const state = createBrowser(userAgent);
+    state.browser.navigator.maxTouchPoints = maxTouchPoints;
+    let prompts = 0;
+    const cancel = startSeoulBikeRental(state.browser, () => { prompts += 1; });
+    state.elapse();
+    assert.equal(prompts, 1);
+    assert.deepEqual(state.navigations, []);
+    assert.equal(state.timers.size, 0);
+    cancel();
+    assert.deepEqual(state.navigations, []);
+  }
+});
+
+test("Android rental still opens the app directly and keeps its store fallback", () => {
+  const state = createBrowser("Android");
+  startSeoulBikeRental(state.browser, () => assert.fail("Unexpected iOS prompt"));
+  assert.match(state.navigations[0], /^intent:/);
+  state.elapse();
+  assert.equal(state.navigations[1], SEOUL_BIKE_PLAY_STORE_URL);
 });
 
 test("iPhone, iPad and desktop-mode iPad use the App Store", () => {

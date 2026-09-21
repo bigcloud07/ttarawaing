@@ -28,7 +28,19 @@ export function getSeoulBikeAppLinks(navigator: {
   return { app: null, install: SEOUL_BIKE_INSTALL_GUIDE_URL };
 }
 
-/** Call synchronously from the click so browsers allow the app launch. */
+/** iOS cannot probe a custom scheme without showing Safari's invalid-URL alert. */
+export function startSeoulBikeRental(
+  browser: Window,
+  showInstallGuide: () => void,
+): () => void {
+  if (getSeoulBikeAppLinks(browser.navigator).app === SEOUL_BIKE_APP_URL) {
+    showInstallGuide();
+    return () => {};
+  }
+  return openSeoulBikeApp(browser);
+}
+
+/** On iOS, call only after the user explicitly chooses to open an installed app. */
 export function openSeoulBikeApp(browser: Window): () => void {
   const { app, install } = getSeoulBikeAppLinks(browser.navigator);
   if (!app) {

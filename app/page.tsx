@@ -92,6 +92,8 @@ import {
 import { readStoredValue, writeStoredValue } from "./safe-storage";
 import {
   openSeoulBikeApp,
+  startSeoulBikeRental,
+  SEOUL_BIKE_APP_STORE_URL,
   SEOUL_BIKE_INSTALL_GUIDE_URL,
 } from "./seoul-bike-app";
 import {
@@ -2870,6 +2872,7 @@ export default function Home() {
   const completedRouteNoticeKeyRef = useRef<string | null>(null);
   const routeAnalyticsAttemptRef = useRef<RouteAnalyticsAttempt | null>(null);
   const cancelBikeAppLaunchRef = useRef<(() => void) | null>(null);
+  const bikeAppInstallDialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => () => cancelBikeAppLaunchRef.current?.(), []);
   const trackedEndpointSelectionKeyRef = useRef<string | null>(null);
   const originLocationRequestGateRef = useRef(createLatestRequestGate());
@@ -4789,7 +4792,10 @@ export default function Home() {
                         onClick={(event) => {
                           event.preventDefault();
                           cancelBikeAppLaunchRef.current?.();
-                          cancelBikeAppLaunchRef.current = openSeoulBikeApp(window);
+                          cancelBikeAppLaunchRef.current = startSeoulBikeRental(
+                            window,
+                            () => bikeAppInstallDialogRef.current?.showModal(),
+                          );
                           const attempt = routeAnalyticsAttemptRef.current;
                           trackProductEvent("bike_deeplink_clicked", {
                             search_attempt_id: attempt?.id ?? null,
@@ -5083,6 +5089,49 @@ export default function Home() {
           )}
         </section>
       </div>
+
+      <dialog
+        ref={bikeAppInstallDialogRef}
+        className="bike-app-install-dialog"
+        aria-labelledby="bike-app-install-title"
+        aria-describedby="bike-app-install-description"
+      >
+        <button
+          type="button"
+          className="bike-app-install-close"
+          aria-label="설치 안내 닫기"
+          onClick={() => bikeAppInstallDialogRef.current?.close()}
+        >
+          <X size={20} aria-hidden="true" />
+        </button>
+        <span className="bike-app-install-icon">
+          <Bike size={28} aria-hidden="true" />
+        </span>
+        <h2 id="bike-app-install-title">따릉이 앱에서 대여해 주세요</h2>
+        <p id="bike-app-install-description">
+          따릉이 앱이 설치되어 있어야 대여하실 수 있어요.
+          <br />
+          App Store에서 앱을 설치한 뒤 대여해 주세요.
+        </p>
+        <a
+          className="bike-app-install-primary"
+          href={SEOUL_BIKE_APP_STORE_URL}
+          onClick={() => bikeAppInstallDialogRef.current?.close()}
+        >
+          App Store에서 설치하기
+        </a>
+        <button
+          type="button"
+          className="bike-app-install-secondary"
+          onClick={() => {
+            bikeAppInstallDialogRef.current?.close();
+            cancelBikeAppLaunchRef.current?.();
+            cancelBikeAppLaunchRef.current = openSeoulBikeApp(window);
+          }}
+        >
+          이미 설치했어요 · 앱 열기
+        </button>
+      </dialog>
 
       {notice ? (
         <div className="toast" role="status">

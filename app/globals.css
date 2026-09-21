@@ -1429,6 +1429,90 @@ input:focus-visible {
   flex: 0 0 auto;
 }
 
+.bike-app-install-dialog {
+  width: min(360px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 28px 24px 24px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.bike-app-install-dialog::backdrop {
+  background: rgba(23, 35, 30, 0.45);
+}
+
+.bike-app-install-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.bike-app-install-icon {
+  display: inline-grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  border-radius: 18px;
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.bike-app-install-dialog h2 {
+  margin: 18px 0 10px;
+  font-size: 19px;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.bike-app-install-dialog p {
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: keep-all;
+}
+
+.bike-app-install-primary,
+.bike-app-install-secondary {
+  display: flex;
+  min-height: 48px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.bike-app-install-primary {
+  background: var(--green-dark);
+  color: white;
+}
+
+.bike-app-install-secondary {
+  margin-top: 8px;
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
 .station-title-copy strong {
   overflow: hidden;
   font-size: 12px;
