@@ -26,6 +26,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   MouseEvent as ReactMouseEvent,
@@ -96,6 +97,7 @@ import {
   SEOUL_BIKE_APP_STORE_URL,
   SEOUL_BIKE_INSTALL_GUIDE_URL,
 } from "./seoul-bike-app";
+
 import {
   createLatestRequestGate,
   requestCurrentPositionOnce,
@@ -161,6 +163,26 @@ import type {
   NearbyStationKind,
 } from "./nearby-station";
 
+function subscribeToUserAgent() {
+  return () => {};
+}
+
+function OfflineStationsLink() {
+  const canOpenOfflineStations = useSyncExternalStore(
+    subscribeToUserAgent,
+    () => navigator.userAgent.split(/\s+/).includes("TtarawaingOfflineStations/1"),
+    () => false,
+  );
+
+  if (!canOpenOfflineStations) return null;
+
+  return (
+    <a className="nearby-station-button offline-station-link" href="ttarawaing://offline-stations">
+      <MapPin size={15} aria-hidden="true" />
+      <span>오프라인 대여소 찾기</span>
+    </a>
+  );
+}
 type Place = {
   id: string;
   name: string;
@@ -4540,6 +4562,7 @@ export default function Home() {
                     </button>
                   );
                 })}
+                <OfflineStationsLink />
               </div>
 
               {nearbyStationError ? (

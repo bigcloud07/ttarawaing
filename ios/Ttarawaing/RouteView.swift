@@ -3,7 +3,6 @@ import WebKit
 
 struct RouteView: View {
     @StateObject private var browser = RouteBrowser()
-    let showStations: () -> Void
 
     var body: some View {
         WebView(webView: browser.webView)
@@ -18,7 +17,7 @@ struct RouteView: View {
                         VStack(spacing: 12) {
                             Button("다시 시도") { browser.load() }
                                 .buttonStyle(.borderedProminent)
-                            Button("오프라인 대여소 찾기", action: showStations)
+                            Button("오프라인 대여소 찾기") { browser.showsOfflineStations = true }
                                 .buttonStyle(.bordered)
                         }
                         .controlSize(.large)
@@ -31,6 +30,9 @@ struct RouteView: View {
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                         .allowsHitTesting(false)
                 }
+            }
+            .sheet(isPresented: $browser.showsOfflineStations) {
+                OfflineStationsView()
             }
     }
 }
@@ -45,18 +47,20 @@ private struct WebView: UIViewRepresentable {
 
 @MainActor
 final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
-    static let origin = URL(string: "https://ttarawaing.vercel.app")!
+    private static let origin = URL(string: "https://ttarawaing.vercel.app")!
     private static let rental = URL(string: "bikeseoul://action")!
     private static let rentalStore = URL(string: "https://apps.apple.com/kr/app/id1037272004")!
+    private static let offlineStations = URL(string: "ttarawaing://offline-stations")!
 
     let webView: WKWebView
     @Published private(set) var isLoading = true
     @Published private(set) var hasFailed = false
+    @Published var showsOfflineStations = false
     private var activeNavigation: WKNavigation?
 
     override init() {
         let configuration = WKWebViewConfiguration()
-        configuration.applicationNameForUserAgent = "TtarawaingApp/iOS"
+        configuration.applicationNameForUserAgent = "TtarawaingApp/iOS TtarawaingOfflineStations/1"
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
@@ -107,12 +111,14 @@ final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             return
         }
 
-        if url == Self.rental {
+        if url == Self.offlineStations && action.navigationType == .linkActivated {
+            showsOfflineStations = true
+        } else if url == Self.rental {
             UIApplication.shared.open(url) { opened in
                 if !opened { UIApplication.shared.open(Self.rentalStore) }
             }
-        } else if url.scheme == "https",
-                  action.navigationType == .linkActivated || url == Self.rentalStore {
+        } else if url == Self.rentalStore ||
+                  (action.navigationType == .linkActivated && (url.scheme == "https" || url.scheme == "mailto")) {
             UIApplication.shared.open(url)
         }
     }
@@ -164,6 +170,20 @@ final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     ) {
         let allowed = frame.isMainFrame && Self.isAppURL(frame.request.url)
         decisionHandler(allowed ? .prompt : .deny)
+    }
+
+    @available(iOS 27.0, *)
+    func webView(
+        _ webView: WKWebView,
+        requestGeolocationPermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        let allowed = frame.isMainFrame && Self.isAppURL(frame.request.url) &&
+            origin.protocol == "https" && origin.host == Self.origin.host &&
+            (origin.port == 0 || origin.port == 443)
+        // 기기의 앱 위치 권한은 iOS가 별도로 확인해요.
+        decisionHandler(allowed ? .grant : .deny)
     }
 
     private static func isAppURL(_ url: URL?) -> Bool {

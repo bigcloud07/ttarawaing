@@ -5,6 +5,7 @@ struct OfflineStationsView: View {
     @StateObject private var location = StationLocation()
     @State private var query = ""
     @Environment(\.openURL) private var openURL
+    @Environment(\.dismiss) private var dismiss
 
     private var results: [StationResult] {
         let words = query.split(whereSeparator: \.isWhitespace)
@@ -52,7 +53,7 @@ struct OfflineStationsView: View {
                         Text(message).font(.subheadline).foregroundStyle(.secondary)
                     }
                 } footer: {
-                    Text("인터넷 없이 대여소 위치를 찾을 수 있어요. 실시간 자전거 수량은 경로 찾기 탭에서 확인해 주세요.")
+                    Text("인터넷 없이 대여소 위치를 찾을 수 있어요. 실시간 자전거 수량은 경로 화면에서 확인해 주세요.")
                 }
 
                 Section {
@@ -92,6 +93,11 @@ struct OfflineStationsView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("오프라인 대여소")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("닫기") { dismiss() }
+                }
+            }
         }
     }
 
@@ -148,6 +154,7 @@ private final class StationLocation: NSObject, ObservableObject, @preconcurrency
     @Published private(set) var needsSettings = false
     @Published private(set) var message: String?
     private let manager = CLLocationManager()
+    private var isRequestingLocation = false
 
     override init() {
         super.init()
@@ -158,6 +165,7 @@ private final class StationLocation: NSObject, ObservableObject, @preconcurrency
 
     func request() {
         message = nil
+        current = nil
         isLocating = true
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
@@ -173,7 +181,9 @@ private final class StationLocation: NSObject, ObservableObject, @preconcurrency
             current = nil
             isLocating = false
             message = "위치 권한이 꺼져 있어요. 대여소 이름이나 주소로도 검색할 수 있어요."
-        } else if isLocating && (status == .authorizedWhenInUse || status == .authorizedAlways) {
+        } else if isLocating && !isRequestingLocation &&
+                  (status == .authorizedWhenInUse || status == .authorizedAlways) {
+            isRequestingLocation = true
             manager.requestLocation()
         } else {
             message = nil
@@ -181,12 +191,16 @@ private final class StationLocation: NSObject, ObservableObject, @preconcurrency
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard isRequestingLocation else { return }
+        isRequestingLocation = false
         isLocating = false
         current = locations.last
         if current == nil { message = "현재 위치를 가져오지 못했어요. 잠시 후 다시 시도해 주세요." }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        guard isRequestingLocation else { return }
+        isRequestingLocation = false
         isLocating = false
         message = "현재 위치를 가져오지 못했어요. 잠시 후 다시 시도해 주세요."
     }

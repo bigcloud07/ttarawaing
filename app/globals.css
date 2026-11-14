@@ -749,6 +749,11 @@ input:focus-visible {
   min-width: 0;
 }
 
+.offline-station-link {
+  grid-column: 1 / -1;
+  min-height: 44px;
+}
+
 .nearby-station-button--rental {
   border-color: #d8def2;
   background: #f8f9fe;
