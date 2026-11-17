@@ -39,20 +39,21 @@ private struct WebView: UIViewRepresentable {
     let browser: RouteBrowser
     let safeAreaInsets: EdgeInsets
 
-    func makeUIView(context: Context) -> WKWebView { browser.webView }
+    func makeUIView(context: Context) -> UIView { browser.view }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
+    func updateUIView(_ view: UIView, context: Context) {
         browser.updateSafeAreaInsets(safeAreaInsets)
     }
 }
 
 @MainActor
-final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
+final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, UIGestureRecognizerDelegate {
     private static let origin = URL(string: "https://ttarawaing.vercel.app")!
     private static let rental = URL(string: "bikeseoul://action")!
     private static let rentalStore = URL(string: "https://apps.apple.com/kr/app/id1037272004")!
 
     let webView: WKWebView
+    let view = UIView()
     @Published private(set) var isLoading = true
     @Published private(set) var hasFailed = false
     private var activeNavigation: WKNavigation?
@@ -161,6 +162,14 @@ final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        let resultBackSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipeBackFromResult))
+        resultBackSwipe.edges = .left
+        resultBackSwipe.delegate = self
+        // WebView 안에 붙이면 지도처럼 터치를 직접 처리하는 웹 요소 위에서 WebKit이 제스처를 막는다.
+        webView.frame = view.bounds
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(webView)
+        view.addGestureRecognizer(resultBackSwipe)
         #if DEBUG
         webView.isInspectable = true
         #endif
@@ -181,6 +190,34 @@ final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             document.documentElement.style.setProperty('--app-safe-area-left', '\(safeAreaInsets.leading)px');
             document.documentElement.style.setProperty('--app-safe-area-right', '\(safeAreaInsets.trailing)px');
             """)
+    }
+
+    // 검색 결과는 웹 방문 기록을 남기지 않아 WebView 기본 스와이프로는 검색 화면에 돌아갈 수 없다.
+    @objc private func swipeBackFromResult(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .ended,
+              gesture.translation(in: webView).x > 80 || gesture.velocity(in: webView).x > 600 else { return }
+        webView.evaluateJavaScript("""
+            (() => {
+                const back = document.querySelector('.app-result-navigation a');
+                back?.click();
+                return Boolean(back);
+            })()
+            """) { result, _ in
+            if result as? Bool == true {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        !webView.canGoBack
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
     }
 
     func load() {
