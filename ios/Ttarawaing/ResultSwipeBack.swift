@@ -9,13 +9,15 @@ final class ResultSwipeBack: NSObject, UIGestureRecognizerDelegate, WKScriptMess
 
     private let webView: WKWebView
     private var isShowingResult = false
-    private var searchScreen: (image: UIImage, scrollY: CGFloat)?
+    private var searchScreen: (image: UIImage, scrollY: CGFloat, takenAt: CFTimeInterval)?
     private var isCapturingSearchScreen = false
     private var underlay: UIView?
     private let dimming = UIView()
 
     private static let resultMessage = "resultScreen"
     private static let backControl = ".app-result-navigation a"
+    private static let snapshotScale: CGFloat = 0.5
+    private static let snapshotLifetime: CFTimeInterval = 1
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -42,13 +44,29 @@ final class ResultSwipeBack: NSObject, UIGestureRecognizerDelegate, WKScriptMess
             source: """
             (() => {
                 let showing = null;
+                let watched = null;
                 const report = () => {
                     const next = Boolean(document.querySelector('\(Self.backControl)'));
-                    if (next === showing) return;
-                    showing = next;
-                    window.webkit.messageHandlers.\(Self.resultMessage).postMessage(next);
+                    if (next !== showing) {
+                        showing = next;
+                        window.webkit.messageHandlers.\(Self.resultMessage).postMessage(next);
+                    }
                 };
-                new MutationObserver(report).observe(document.body, { childList: true, subtree: true });
+                const observer = new MutationObserver(() => { watch(); report(); });
+                const watch = () => {
+                    const shell = document.querySelector('main.app-shell');
+                    if (shell === watched) return;
+                    watched = shell;
+                    observer.disconnect();
+                    if (!shell) {
+                        observer.observe(document.body, { childList: true, subtree: true });
+                        return;
+                    }
+                    for (let node = shell; node && node !== document.documentElement; node = node.parentNode) {
+                        observer.observe(node, { childList: true });
+                    }
+                };
+                watch();
                 report();
             })();
             """,
@@ -61,15 +79,23 @@ final class ResultSwipeBack: NSObject, UIGestureRecognizerDelegate, WKScriptMess
         isShowingResult = message.body as? Bool == true
     }
 
-    // 결과 화면이 뜨기 직전의 검색 화면을 스와이프 아래에 깔아 두려고, 검색 화면을 터치할 때마다 새로 찍어 둔다.
+    private func isSearchScreenCurrent(scrollY: CGFloat, now: CFTimeInterval) -> Bool {
+        guard let searchScreen else { return false }
+        return searchScreen.scrollY == scrollY && now - searchScreen.takenAt < Self.snapshotLifetime
+    }
+
     private func captureSearchScreen() {
         guard !isShowingResult, !isCapturingSearchScreen, underlay == nil else { return }
-        isCapturingSearchScreen = true
         let scrollY = webView.scrollView.contentOffset.y
-        webView.takeSnapshot(with: nil) { [weak self] image, _ in
+        let now = CACurrentMediaTime()
+        if isSearchScreenCurrent(scrollY: scrollY, now: now) { return }
+        isCapturingSearchScreen = true
+        let configuration = WKSnapshotConfiguration()
+        configuration.snapshotWidth = NSNumber(value: Double(webView.bounds.width * Self.snapshotScale))
+        webView.takeSnapshot(with: configuration) { [weak self] image, _ in
             guard let self else { return }
             isCapturingSearchScreen = false
-            if let image, !isShowingResult { searchScreen = (image, scrollY) }
+            if let image, !isShowingResult { searchScreen = (image, scrollY, now) }
         }
     }
 
@@ -108,7 +134,7 @@ final class ResultSwipeBack: NSObject, UIGestureRecognizerDelegate, WKScriptMess
         let underlay = UIImageView(image: searchScreen?.image)
         underlay.frame = container.bounds
         underlay.backgroundColor = .white
-        underlay.contentMode = .top
+        underlay.contentMode = .scaleToFill
         underlay.clipsToBounds = true
         dimming.frame = underlay.bounds
         underlay.addSubview(dimming)
