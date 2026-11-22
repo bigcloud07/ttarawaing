@@ -632,6 +632,7 @@ export default function AboutPage() {
           </p>
           <div className={styles.footerLinks}>
             <Link href="/">서비스 열기</Link>
+            <Link href="/privacy">개인정보 처리방침</Link>
             <a
               href="https://github.com/woowacourse-personal/2026-lumen-ttarawaing"
               target="_blank"

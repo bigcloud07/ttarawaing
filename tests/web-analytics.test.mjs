@@ -16,7 +16,8 @@ test("loads privacy-safe web analytics only for Vercel deployments", async () =>
     analyticsSource,
     /window\.location\.hostname\.endsWith\("\.vercel\.app"\)/,
   );
-  assert.match(analyticsSource, /return isVercelHost \? \(/);
+  assert.match(analyticsSource, /!isTtarawaingIOS\(window\.navigator\.userAgent\)/);
+  assert.match(analyticsSource, /return shouldRenderAnalytics \? \(/);
   assert.match(analyticsSource, /<Analytics beforeSend=\{removeSensitiveUrlParts\} \/>/);
   assert.match(analyticsSource, /url: `\$\{url\.origin\}\$\{url\.pathname\}`/);
   assert.doesNotMatch(

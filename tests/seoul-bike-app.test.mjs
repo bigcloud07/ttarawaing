@@ -75,6 +75,14 @@ test("Android rental still opens the app directly and keeps its store fallback",
   assert.equal(state.navigations[1], SEOUL_BIKE_PLAY_STORE_URL);
 });
 
+test("the iOS app hands rental off to native code without a second store redirect", () => {
+  const state = createBrowser("Mozilla/5.0 (iPhone) TtarawaingApp/iOS");
+  startSeoulBikeRental(state.browser, () => assert.fail("Unexpected Safari install guide"));
+  state.elapse();
+  assert.deepEqual(state.navigations, [SEOUL_BIKE_APP_URL]);
+  assert.equal(state.timers.size, 0);
+});
+
 test("iPhone, iPad and desktop-mode iPad use the App Store", () => {
   for (const navigator of [
     { userAgent: "iPhone" },

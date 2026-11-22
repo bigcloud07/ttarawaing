@@ -1,4 +1,5 @@
 import type { CaptureResult, PostHog } from "posthog-js";
+import { isTtarawaingIOS } from "./native-app.ts";
 import type { PassType } from "./pass-planning";
 
 export type RouteSearchSource = "form" | "history" | "map_drag";
@@ -418,7 +419,9 @@ function getAnalyticsViewport(): AnalyticsViewport {
 }
 
 async function getPostHogClient(): Promise<PostHog | null> {
-  if (typeof window === "undefined") return null;
+  if (typeof window === "undefined" || isTtarawaingIOS(window.navigator.userAgent)) {
+    return null;
+  }
 
   const token = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
   if (

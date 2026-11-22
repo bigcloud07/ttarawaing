@@ -5,6 +5,7 @@ import {
   Analytics,
   type BeforeSendEvent,
 } from "@vercel/analytics/next";
+import { isTtarawaingIOS } from "./native-app";
 
 function removeSensitiveUrlParts(event: BeforeSendEvent): BeforeSendEvent {
   try {
@@ -24,13 +25,15 @@ function subscribeToHost() {
 }
 
 export default function WebAnalytics() {
-  const isVercelHost = useSyncExternalStore(
+  const shouldRenderAnalytics = useSyncExternalStore(
     subscribeToHost,
-    () => window.location.hostname.endsWith(".vercel.app"),
+    () =>
+      window.location.hostname.endsWith(".vercel.app") &&
+      !isTtarawaingIOS(window.navigator.userAgent),
     () => false,
   );
 
-  return isVercelHost ? (
+  return shouldRenderAnalytics ? (
     <Analytics beforeSend={removeSensitiveUrlParts} />
   ) : null;
 }
