@@ -25,6 +25,9 @@ struct RouteView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
+            } else if !browser.hasShownPage {
+                SplashView()
+                    .transition(.opacity)
             } else if browser.isLoading {
                 ProgressView("경로 화면을 여는 중")
                     .padding(20)
@@ -32,6 +35,21 @@ struct RouteView: View {
                     .allowsHitTesting(false)
             }
         }
+        .animation(.easeOut(duration: 0.25), value: browser.hasShownPage)
+    }
+}
+
+// Info.plist의 UILaunchScreen과 같은 배경과 그림이어야 실행 화면에서 끊김 없이 이어진다.
+private struct SplashView: View {
+    var body: some View {
+        ZStack {
+            Color("SplashBackground")
+            Image("SplashLogo")
+                .resizable()
+                .frame(width: 200, height: 200)
+        }
+        .ignoresSafeArea()
+        .accessibilityLabel("따라와잉")
     }
 }
 
@@ -57,6 +75,7 @@ final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var view: UIView { resultSwipeBack.container }
     @Published private(set) var isLoading = true
     @Published private(set) var hasFailed = false
+    @Published private(set) var hasShownPage = false
     private var activeNavigation: WKNavigation?
     private var safeAreaInsets = EdgeInsets()
 
@@ -259,6 +278,7 @@ final class RouteBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard navigation === activeNavigation else { return }
         applySafeAreaInsets()
+        hasShownPage = true
         isLoading = false
         activeNavigation = nil
     }
