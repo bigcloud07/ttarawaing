@@ -1,3 +1,5 @@
+import { trimKakaoRoutePayload } from "../../kakao-route-payload.ts";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -244,7 +246,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return new Response(upstreamBody, {
+    return new Response(JSON.stringify(trimKakaoRoutePayload(upstreamJson)), {
       status: upstream.status,
       headers: {
         ...RESPONSE_HEADERS,
