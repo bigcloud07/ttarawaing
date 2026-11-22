@@ -139,7 +139,7 @@ import {
   getDraggedOverlayPoint,
   hasMeaningfulOverlayDrag,
 } from "./kakao-overlay-drag";
-import stationCatalog from "./data/seoul-bike-stations.json";
+import { loadStationCatalog, type Station } from "./station-catalog";
 import type {
   KakaoCustomOverlay,
   KakaoMap,
@@ -171,13 +171,10 @@ type Place = {
   coordinates: Coordinates;
 };
 
-type Station = {
-  id: string;
-  name: string;
-  address: string;
-  coordinates: Coordinates;
-  bikes: number | null;
-};
+type StationsState =
+  | { status: "loading" }
+  | { status: "ready"; stations: Station[] }
+  | { status: "unavailable" };
 
 type RoutePlan = {
   origin: Place;
@@ -354,13 +351,6 @@ const PLACES: Place[] = [
   },
 ];
 
-const STATIONS: Station[] = stationCatalog.stations.map((station) => ({
-  id: station.id,
-  name: station.name,
-  address: station.address,
-  coordinates: [station.latitude, station.longitude],
-  bikes: null,
-}));
 const EMPTY_STATIONS: Station[] = [];
 const EMPTY_BIKE_LEGS: BikeRouteLeg[] = [];
 const EMPTY_PLANNED_ROUTE_LEGS: PlannedRouteLeg[] = [];
@@ -2941,16 +2931,14 @@ export default function Home() {
     startY: number;
   } | null>(null);
   const mobileDetailsIgnoreClickUntilRef = useRef(0);
-  const [stations, setStations] = useState(STATIONS);
-  const stationsRef = useRef(stations);
+  const [stations, setStations] = useState<StationsState>({
+    status: "loading",
+  });
+  const stationsRef = useRef<Station[]>(EMPTY_STATIONS);
   const liveBikeUpdatedAtRef = useRef<number | null>(null);
   const [liveBikeStatus, setLiveBikeStatus] = useState<
     "loading" | "ready" | "unavailable"
   >("loading");
-
-  useEffect(() => {
-    stationsRef.current = stations;
-  }, [stations]);
 
   useEffect(() => {
     trackProductEvent("core_view", { surface: "route_planner" });
@@ -3051,20 +3039,21 @@ export default function Home() {
 
   const fetchRealtimeStations = useCallback(
     async (signal: AbortSignal, fresh = false) => {
-      const realtimeAvailability = await fetchRealtimeBikeAvailability(signal, {
-        fresh,
-      });
+      const [catalog, realtimeAvailability] = await Promise.all([
+        loadStationCatalog(),
+        fetchRealtimeBikeAvailability(signal, { fresh }),
+      ]);
       const availabilityById = new Map<string, number>();
       for (const station of realtimeAvailability) {
         availabilityById.set(station.id, station.availableBikes);
       }
 
-      const minimumRealtimeStationCount = Math.floor(STATIONS.length * 0.98);
+      const minimumRealtimeStationCount = Math.floor(catalog.length * 0.98);
       if (availabilityById.size < minimumRealtimeStationCount) {
         throw new Error("Realtime bike station data is incomplete.");
       }
 
-      return STATIONS.map((station) => ({
+      return catalog.map((station) => ({
         ...station,
         bikes: availabilityById.get(station.id) ?? null,
       }));
@@ -3075,7 +3064,7 @@ export default function Home() {
   const applyRealtimeStations = useCallback((updatedStations: Station[]) => {
     stationsRef.current = updatedStations;
     liveBikeUpdatedAtRef.current = Date.now();
-    setStations(updatedStations);
+    setStations({ status: "ready", stations: updatedStations });
     setLiveBikeStatus("ready");
   }, []);
 
@@ -3121,13 +3110,28 @@ export default function Home() {
     return () => controller.abort();
   }, [applyRealtimeStations, fetchRealtimeStations]);
 
+  useEffect(() => {
+    void loadStationCatalog().then(
+      (catalog) =>
+        setStations((current) =>
+          current.status === "ready"
+            ? current
+            : { status: "ready", stations: catalog },
+        ),
+      () =>
+        setStations((current) =>
+          current.status === "ready" ? current : { status: "unavailable" },
+        ),
+    );
+  }, [committedRoute]);
+
   const basePlan = useMemo(
     () =>
-      committedRoute
+      committedRoute && stations.status === "ready"
         ? buildPlan(
             committedRoute.origin,
             committedRoute.destination,
-            stations,
+            stations.stations,
             selectedEndStationId,
           )
         : null,
@@ -3136,11 +3140,16 @@ export default function Home() {
   const routeRecommendation = useRouteRecommendation(
     basePlan,
     passType,
-    stations,
+    stations.status === "ready" ? stations.stations : EMPTY_STATIONS,
     preferBikeRoads,
     selectedEndStationId,
   );
   const plan = routeRecommendation?.plan ?? null;
+  const routeErrorMessage =
+    errorMessage ||
+    (committedRoute && stations.status === "unavailable"
+      ? "따릉이 대여소 정보를 불러오지 못했어요. 잠시 후 다시 검색해 주세요."
+      : "");
   const transferStops = routeRecommendation?.transferStops ?? EMPTY_STATIONS;
   const bikeLegs = routeRecommendation?.bikeLegs ?? EMPTY_BIKE_LEGS;
   const passRouteStatus = routeRecommendation?.passStatus ?? "loading";
@@ -4061,7 +4070,7 @@ export default function Home() {
           position.coords.latitude,
           position.coords.longitude,
         ];
-        let lookupStations = STATIONS;
+        let lookupStations: Station[] | null = null;
         let availability: NearbyAvailabilityStatus = "unknown";
 
         if (kind === "rental") {
@@ -4090,7 +4099,6 @@ export default function Home() {
                 return;
               }
               setLiveBikeStatus("unavailable");
-              lookupStations = STATIONS;
               availability = "unknown";
             }
           }
@@ -4098,17 +4106,18 @@ export default function Home() {
 
         if (!isCurrentRequest()) return;
         setNearbyStationLookupStatus("routing");
-        const straightNearestStation =
-          kind === "rental"
-            ? selectNearbyStationCandidates({
-                kind,
-                currentLocation,
-                stations: lookupStations,
-                availability: "unknown",
-              })[0]?.station
-            : undefined;
-
         try {
+          lookupStations ??= await loadStationCatalog();
+          if (!isCurrentRequest()) return;
+          const straightNearestStation =
+            kind === "rental"
+              ? selectNearbyStationCandidates({
+                  kind,
+                  currentLocation,
+                  stations: lookupStations,
+                  availability: "unknown",
+                })[0]?.station
+              : undefined;
           const result = await findNearbyStation({
             kind,
             currentLocation,
@@ -4494,9 +4503,9 @@ export default function Home() {
                 />
               </label>
 
-              {errorMessage ? (
+              {routeErrorMessage ? (
                 <p className="form-error" role="alert">
-                  {errorMessage}
+                  {routeErrorMessage}
                 </p>
               ) : null}
 
