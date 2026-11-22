@@ -1,4 +1,4 @@
-import type { CaptureResult, PostHog } from "posthog-js";
+import type { CaptureResult, PostHog } from "posthog-js/dist/module.slim";
 import { isTtarawaingIOS } from "./native-app.ts";
 import type { PassType } from "./pass-planning";
 
@@ -226,6 +226,29 @@ const REFERRER_PROPERTY_NAMES = new Set([
 ]);
 
 let postHogClientPromise: Promise<PostHog | null> | null = null;
+let postHogStartupGate: { ready: Promise<void>; release: () => void } | null =
+  null;
+
+const STARTUP_IDLE_TIMEOUT_MS = 3_000;
+
+function createStartupGate() {
+  let release = () => {};
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const releaseWhenIdle = () => {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(release, { timeout: STARTUP_IDLE_TIMEOUT_MS });
+    } else {
+      window.setTimeout(release, 1);
+    }
+  };
+
+  if (document.readyState === "complete") releaseWhenIdle();
+  else window.addEventListener("load", releaseWhenIdle, { once: true });
+
+  return { ready, release };
+}
 
 function isFiniteNonNegative(value: number) {
   return Number.isFinite(value) && value >= 0;
@@ -418,7 +441,7 @@ function getAnalyticsViewport(): AnalyticsViewport {
   return window.matchMedia("(max-width: 900px)").matches ? "mobile" : "desktop";
 }
 
-async function getPostHogClient(): Promise<PostHog | null> {
+async function getPostHogClient(eager: boolean): Promise<PostHog | null> {
   if (typeof window === "undefined" || isTtarawaingIOS(window.navigator.userAgent)) {
     return null;
   }
@@ -435,7 +458,9 @@ async function getPostHogClient(): Promise<PostHog | null> {
   }
 
   if (!postHogClientPromise) {
-    postHogClientPromise = import("posthog-js")
+    postHogStartupGate = createStartupGate();
+    postHogClientPromise = postHogStartupGate.ready
+      .then(() => import("posthog-js/dist/module.slim"))
       .then(({ default: posthog }) => {
         posthog.init(token!.trim(), {
           api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST || DEFAULT_POSTHOG_HOST,
@@ -466,6 +491,7 @@ async function getPostHogClient(): Promise<PostHog | null> {
       .catch(() => null);
   }
 
+  if (eager) postHogStartupGate?.release();
   return postHogClientPromise;
 }
 
@@ -477,7 +503,7 @@ export function trackProductEvent<EventName extends ProductEventName>(
   if (typeof window === "undefined") return;
 
   const sanitizedProperties = sanitizeProductEventProperties(eventName, properties);
-  void getPostHogClient().then((posthog) => {
+  void getPostHogClient(options.immediate === true).then((posthog) => {
     posthog?.capture(
       eventName,
       {

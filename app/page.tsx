@@ -968,7 +968,10 @@ function PlaceField({
           autoComplete="off"
           value={query}
           placeholder={placeholder}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            setOpen(true);
+            void loadKakaoMapsSdk().catch(() => {});
+          }}
           onBlur={() => window.setTimeout(() => setOpen(false), 120)}
           onChange={(event) => {
             onQueryChange(event.target.value);

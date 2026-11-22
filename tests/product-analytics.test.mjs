@@ -137,3 +137,24 @@ test("PostHog is configured for explicit, privacy-safe product events only", asy
   assert.match(source, /transport: "sendBeacon"/);
   assert.doesNotMatch(source, /\baddress\b|\bcoordinates?\b|station_name/);
 });
+
+test("PostHog loads the slim build after the page has loaded", async () => {
+  const source = await readFile(
+    new URL("../app/product-analytics.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /import\("posthog-js\/dist\/module\.slim"\)/);
+  assert.doesNotMatch(source, /import\("posthog-js"\)/);
+  assert.match(source, /requestIdleCallback/);
+});
+
+test("the root layout stays free of request-time APIs so pages can be static", async () => {
+  const layout = await readFile(
+    new URL("../app/layout.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(layout, /next\/headers/);
+  assert.match(layout, /rel="preconnect" href="https:\/\/dapi\.kakao\.com"/);
+});

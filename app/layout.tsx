@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { headers } from "next/headers";
 import { Geist } from "next/font/google";
 import "./globals.css";
 import WebAnalytics from "./web-analytics";
@@ -15,11 +14,13 @@ const siteDescription =
 const socialImagePath = "/og-v2.png";
 const socialImageAlt = "따라와잉 — 따릉이를 더 편하게";
 
-export async function generateMetadata(): Promise<Metadata> {
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
-  const protocol = requestHeaders.get("x-forwarded-proto") ?? "https";
-  const origin = host ? `${protocol}://${host}` : "http://localhost:3000";
+function getSiteOrigin() {
+  const host = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  return host ? `https://${host}` : "http://localhost:3000";
+}
+
+export function generateMetadata(): Metadata {
+  const origin = getSiteOrigin();
 
   return {
     title: siteTitle,
@@ -66,6 +67,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
+      <head>
+        <link rel="preconnect" href="https://dapi.kakao.com" />
+        <link rel="preconnect" href="https://t1.kakaocdn.net" />
+      </head>
       <body className={geist.variable}>
         {children}
         <WebAnalytics />
