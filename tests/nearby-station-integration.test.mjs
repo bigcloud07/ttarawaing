@@ -87,7 +87,10 @@ test("가까운 대여소 조회는 검색 입력과 기존 전체 경로를 변
   );
 
   assert.match(lookupSource, /setNearbyStationResult\(\{/);
-  assert.match(lookupSource, /setMapUserLocation\(currentLocation\)/);
+  assert.match(
+    lookupSource,
+    /mapLivePosition\.set\(\{ location: currentLocation \}\)/,
+  );
   assert.doesNotMatch(
     lookupSource,
     /\bset(?:Origin|Destination|OriginQuery|DestinationQuery|CommittedRoute)\s*\(/,
@@ -275,8 +278,7 @@ test("가까운 대여소 전용 지도는 기존 위치·방향 상태와 제�
     "/>",
   );
   for (const prop of [
-    "userLocation={mapUserLocation}",
-    "userHeading={mapUserHeading}",
+    "livePosition={mapLivePosition}",
     "locationFocusRequestId={mapLocationFocusRequestId}",
     "locationStatus={mapLocationStatus}",
     "locationMode={mapLocationMode}",
