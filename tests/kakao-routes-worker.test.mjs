@@ -26,8 +26,23 @@ function routeRequest(body, init = {}) {
 
 test("proxies walking coordinates to the public Kakao route endpoint", async () => {
   const originalFetch = globalThis.fetch;
-  const upstreamPayload =
-    '{"status":"OK","route":{"properties":{"totalDistance":123}}}';
+  const upstreamPayload = JSON.stringify({
+    status: "OK",
+    route: {
+      properties: { totalDistance: 123, landingUrl: "https://map.kakao.com/" },
+      legs: [
+        {
+          properties: { distance: 123, time: 60 },
+          steps: [
+            {
+              properties: { distance: 123, time: 60, guidance: "123m 이동" },
+              path: { points: [[127.1, 37.1], [127.2, 37.2]] },
+            },
+          ],
+        },
+      ],
+    },
+  });
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
     assert.equal(url.origin, "https://dapi.kakao.com");
@@ -64,7 +79,17 @@ test("proxies walking coordinates to the public Kakao route endpoint", async () 
     );
 
     assert.equal(response.status, 200);
-    assert.equal(await response.text(), upstreamPayload);
+    assert.deepEqual(await response.json(), {
+      status: "OK",
+      route: {
+        legs: [
+          {
+            properties: { distance: 123, time: 60 },
+            steps: [{ path: { points: [[127.1, 37.1], [127.2, 37.2]] } }],
+          },
+        ],
+      },
+    });
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal(response.headers.get("x-ttarawaing-route-profile"), "walk");
     assert.equal(response.headers.has("x-ttarawaing-bike-route-mode"), false);

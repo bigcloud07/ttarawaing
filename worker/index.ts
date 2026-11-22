@@ -2,6 +2,7 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { respondWithBikeSeoulRealtime } from "../app/bike-seoul-realtime-server";
+import { trimKakaoRoutePayload } from "../app/kakao-route-payload";
 
 interface Env {
   ASSETS: Fetcher;
@@ -332,7 +333,7 @@ async function handleKakaoRouteRequest(
       );
     }
 
-    return new Response(upstreamBody, {
+    return new Response(JSON.stringify(trimKakaoRoutePayload(upstreamJson)), {
       status: upstream.status,
       headers: {
         ...ROUTE_RESPONSE_HEADERS,

@@ -107,16 +107,18 @@ const FOOT_METERS_PER_SECOND = 76 / 60;
 const BIKE_METERS_PER_SECOND = 245 / 60;
 const DEFAULT_BIKE_ROUTE_MODE: BikeRouteMode = "SHORTEST";
 
+type BikeRoute = { segment: RouteSegment; legs: BikeRouteLeg[] };
+
+type SharedRequest<T> = {
+  promise: Promise<T>;
+  controller: AbortController;
+  holders: number;
+};
+
 const resolvedWalkCache = new Map<string, RouteSegment>();
-const inFlightWalkCache = new Map<string, Promise<RouteSegment>>();
-const resolvedBikeRouteCache = new Map<
-  string,
-  { segment: RouteSegment; legs: BikeRouteLeg[] }
->();
-const inFlightBikeRouteCache = new Map<
-  string,
-  Promise<{ segment: RouteSegment; legs: BikeRouteLeg[] }>
->();
+const inFlightWalkCache = new Map<string, SharedRequest<RouteSegment>>();
+const resolvedBikeRouteCache = new Map<string, BikeRoute>();
+const inFlightBikeRouteCache = new Map<string, SharedRequest<BikeRoute>>();
 
 function isCoordinates(value: unknown): value is Coordinates {
   if (!Array.isArray(value) || value.length !== 2) return false;
@@ -509,7 +511,7 @@ async function requestKakaoBikeRoute(
   coordinates: Coordinates[],
   bikeRouteMode: BikeRouteMode,
   signal?: AbortSignal,
-): Promise<{ segment: RouteSegment; legs: BikeRouteLeg[] }> {
+): Promise<BikeRoute> {
   throwIfAborted(signal);
   if (coordinates.length < 2) throw new Error("Bicycle route needs two points.");
 
@@ -564,36 +566,95 @@ function rememberValue<T>(cache: Map<string, T>, key: string, value: T) {
   }
 }
 
+function startSharedRequest<T>(
+  resolvedCache: Map<string, T>,
+  inFlightCache: Map<string, SharedRequest<T>>,
+  key: string,
+  request: (signal: AbortSignal) => Promise<T>,
+) {
+  const controller = new AbortController();
+  const shared: SharedRequest<T> = {
+    controller,
+    holders: 0,
+    promise: request(controller.signal)
+      .then((value) => {
+        rememberValue(resolvedCache, key, value);
+        return value;
+      })
+      .finally(() => {
+        if (inFlightCache.get(key) === shared) inFlightCache.delete(key);
+      }),
+  };
+  shared.promise.catch(() => {});
+  inFlightCache.set(key, shared);
+  return shared;
+}
+
+function loadShared<T>(
+  resolvedCache: Map<string, T>,
+  inFlightCache: Map<string, SharedRequest<T>>,
+  key: string,
+  request: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  throwIfAborted(signal);
+  const resolved = resolvedCache.get(key);
+  if (resolved) {
+    rememberValue(resolvedCache, key, resolved);
+    return Promise.resolve(resolved);
+  }
+
+  const shared =
+    inFlightCache.get(key) ??
+    startSharedRequest(resolvedCache, inFlightCache, key, request);
+  shared.holders += 1;
+  if (!signal) return shared.promise;
+
+  return new Promise<T>((resolve, reject) => {
+    let held = true;
+    const release = () => {
+      if (!held) return;
+      held = false;
+      shared.holders -= 1;
+      signal.removeEventListener("abort", onAbort);
+    };
+    // Abort on a later task, so a caller that restarts in the same task, as a
+    // React effect does after its cleanup, reuses the request.
+    const onAbort = () => {
+      release();
+      reject(createAbortError());
+      globalThis.setTimeout(() => {
+        if (shared.holders > 0 || inFlightCache.get(key) !== shared) return;
+        inFlightCache.delete(key);
+        shared.controller.abort();
+      }, 0);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    shared.promise.then(
+      (value) => {
+        release();
+        resolve(value);
+      },
+      (error: unknown) => {
+        release();
+        reject(error);
+      },
+    );
+  });
+}
+
 function loadWalkSegment(
   from: Coordinates,
   to: Coordinates,
   signal?: AbortSignal,
 ) {
-  throwIfAborted(signal);
-  const key = walkSegmentKey(from, to);
-  const resolved = resolvedWalkCache.get(key);
-  if (resolved) {
-    rememberValue(resolvedWalkCache, key, resolved);
-    return Promise.resolve(resolved);
-  }
-
-  if (signal) {
-    return requestKakaoWalkSegment(from, to, signal).then((segment) => {
-      rememberValue(resolvedWalkCache, key, segment);
-      return segment;
-    });
-  }
-
-  const inFlight = inFlightWalkCache.get(key);
-  if (inFlight) return inFlight;
-  const pending = requestKakaoWalkSegment(from, to)
-    .then((segment) => {
-      rememberValue(resolvedWalkCache, key, segment);
-      return segment;
-    })
-    .finally(() => inFlightWalkCache.delete(key));
-  inFlightWalkCache.set(key, pending);
-  return pending;
+  return loadShared(
+    resolvedWalkCache,
+    inFlightWalkCache,
+    walkSegmentKey(from, to),
+    (requestSignal) => requestKakaoWalkSegment(from, to, requestSignal),
+    signal,
+  );
 }
 
 function loadBikeRoute(
@@ -601,33 +662,14 @@ function loadBikeRoute(
   bikeRouteMode: BikeRouteMode,
   signal?: AbortSignal,
 ) {
-  throwIfAborted(signal);
-  const key = bikeRouteKey(coordinates, bikeRouteMode);
-  const resolved = resolvedBikeRouteCache.get(key);
-  if (resolved) {
-    rememberValue(resolvedBikeRouteCache, key, resolved);
-    return Promise.resolve(resolved);
-  }
-
-  if (signal) {
-    return requestKakaoBikeRoute(coordinates, bikeRouteMode, signal).then(
-      (route) => {
-        rememberValue(resolvedBikeRouteCache, key, route);
-        return route;
-      },
-    );
-  }
-
-  const inFlight = inFlightBikeRouteCache.get(key);
-  if (inFlight) return inFlight;
-  const pending = requestKakaoBikeRoute(coordinates, bikeRouteMode)
-    .then((route) => {
-      rememberValue(resolvedBikeRouteCache, key, route);
-      return route;
-    })
-    .finally(() => inFlightBikeRouteCache.delete(key));
-  inFlightBikeRouteCache.set(key, pending);
-  return pending;
+  return loadShared(
+    resolvedBikeRouteCache,
+    inFlightBikeRouteCache,
+    bikeRouteKey(coordinates, bikeRouteMode),
+    (requestSignal) =>
+      requestKakaoBikeRoute(coordinates, bikeRouteMode, requestSignal),
+    signal,
+  );
 }
 
 function recoverSegment<T>(

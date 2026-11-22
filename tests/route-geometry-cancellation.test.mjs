@@ -119,7 +119,7 @@ test("aborting a route cancels all three parallel Kakao segment requests", async
 
   controller.abort();
   await rejectsPromptly(pending);
-  assert.equal(requestedSignals.every((signal) => signal.aborted), true);
+  await waitUntil(() => requestedSignals.every((signal) => signal.aborted));
 });
 
 test("an already canceled route never starts a Kakao request", async (t) => {
@@ -143,34 +143,67 @@ test("an already canceled route never starts a Kakao request", async (t) => {
   assert.equal(requestCount, 0);
 });
 
-test("canceling one same-key caller does not cancel another caller's Kakao requests", async (t) => {
+function deferredFetch() {
+  const pending = [];
+  const fetch = (_url, init = {}) =>
+    new Promise((resolve, reject) => {
+      pending.push({ init, resolve: () => resolve(successfulRouteResponse(init)) });
+      init.signal?.addEventListener("abort", () => reject(abortError()), {
+        once: true,
+      });
+    });
+  return { fetch, pending };
+}
+
+test("canceling one same-key caller keeps the shared Kakao requests for another caller", async (t) => {
   const { loadRouteGeometry } = await importFreshRouteGeometry();
   const originalFetch = globalThis.fetch;
-  let requestCount = 0;
-  globalThis.fetch = (url, init = {}) => {
-    requestCount += 1;
-    if (requestCount <= 3) {
-      return hangingFetch(() => {})(url, init);
-    }
-    return Promise.resolve(successfulRouteResponse(init));
-  };
+  const upstream = deferredFetch();
+  globalThis.fetch = upstream.fetch;
   t.after(() => {
     globalThis.fetch = originalFetch;
   });
 
   const input = routeInput(0.08);
   const canceledController = new AbortController();
-  const currentController = new AbortController();
   const canceled = loadRouteGeometry(input, canceledController.signal);
-  await waitUntil(() => requestCount === 3);
-  const current = loadRouteGeometry(input, currentController.signal);
+  await waitUntil(() => upstream.pending.length === 3);
+  const current = loadRouteGeometry(input, new AbortController().signal);
 
   canceledController.abort();
   await rejectsPromptly(canceled);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(upstream.pending.some(({ init }) => init.signal.aborted), false);
+  upstream.pending.forEach(({ resolve }) => resolve());
   const geometry = await current;
 
   assert.equal(geometry.walkTo.source, "kakao");
   assert.equal(geometry.bike.source, "kakao");
   assert.equal(geometry.walkFrom.source, "kakao");
-  assert.equal(requestCount, 6);
+  assert.equal(upstream.pending.length, 3);
+});
+
+test("a caller that restarts right after its abort reuses the in-flight Kakao requests", async (t) => {
+  const { loadRouteGeometry } = await importFreshRouteGeometry();
+  const originalFetch = globalThis.fetch;
+  const upstream = deferredFetch();
+  globalThis.fetch = upstream.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const input = routeInput(0.12);
+  const firstRun = new AbortController();
+  const first = loadRouteGeometry(input, firstRun.signal);
+  await waitUntil(() => upstream.pending.length === 3);
+  firstRun.abort();
+  const rerun = loadRouteGeometry(input, new AbortController().signal);
+
+  await rejectsPromptly(first);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  upstream.pending.forEach(({ resolve }) => resolve());
+  const geometry = await rerun;
+
+  assert.equal(geometry.bike.source, "kakao");
+  assert.equal(upstream.pending.length, 3);
 });

@@ -310,7 +310,7 @@ test("builds and validates the minimum number of road-routed transfer stops", as
   assert.match(pageSource, /recommendPassTransferRoute\(\{/);
   assert.match(pageSource, /ROUTE_RECOMMENDATION_TIMEOUT_MS = 60_000/);
   assert.match(pageSource, /controller\.abort\(\)/);
-  assert.match(recommendationSource, /let stopCount = Math\.max\(1, initialStopCount\)/);
+  assert.match(recommendationSource, /firstStopCount: Math\.max\(1, initialStopCount\)/);
   assert.match(recommendationSource, /stopCount \+= 1/);
   assert.match(
     recommendationSource,
@@ -327,7 +327,7 @@ test("builds and validates the minimum number of road-routed transfer stops", as
     recommendationSource,
     /geometry\.bikeLegs\.every\(\(leg\) => leg\.source === "kakao"\)/,
   );
-  assert.match(recommendationSource, /catch \(error: unknown\)[\s\S]*continue;/);
+  assert.match(recommendationSource, /catch \(error: unknown\)[\s\S]*return null;/);
   assert.match(routeSource, /transferStations\?: Coordinates\[\]/);
   assert.match(routeSource, /response\.route\.legs/);
   assert.match(routeSource, /loadBikeRoute\(bikeCoordinates, getBikeRouteMode\(input\), signal\)/);

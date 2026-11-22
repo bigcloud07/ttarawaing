@@ -69,6 +69,7 @@ export type RouteGeometryMetrics = {
 
 const DEFAULT_MAXIMUM_TRANSFER_STOPS = 8;
 const DEFAULT_MAXIMUM_COMBINATIONS_PER_STOP_COUNT = 4;
+const MAXIMUM_CONCURRENT_CANDIDATES = 4;
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError";
@@ -116,6 +117,77 @@ export function calculateRouteGeometryMetrics(
       bikeMinutes * 6.2 + (walkToMinutes + walkFromMinutes) * 3.1,
     ),
   };
+}
+
+function* transferStopCandidates<T extends PassTransferStation>({
+  routePath,
+  stations,
+  endpointStationIds,
+  firstStopCount,
+  maximumStopCount,
+  maximumCombinationsPerStopCount,
+  selectStations,
+}: {
+  routePath: RouteGeometry["bike"]["path"];
+  stations: readonly T[];
+  endpointStationIds: ReadonlySet<string>;
+  firstStopCount: number;
+  maximumStopCount: number;
+  maximumCombinationsPerStopCount: number;
+  selectStations: TransferStationSelector<T>;
+}) {
+  const rerentableStations = stations.filter(
+    (station) => station.bikes !== 0,
+  );
+
+  for (
+    let stopCount = firstStopCount;
+    stopCount <= maximumStopCount;
+    stopCount += 1
+  ) {
+    const exclusionQueue: Set<string>[] = [new Set(endpointStationIds)];
+    const seenExclusionSets = new Set([
+      [...endpointStationIds].sort().join(","),
+    ]);
+    const triedStationSequences = new Set<string>();
+    let combinationCount = 0;
+
+    while (
+      exclusionQueue.length > 0 &&
+      combinationCount < maximumCombinationsPerStopCount
+    ) {
+      const excludedStationIds =
+        exclusionQueue.shift() ?? endpointStationIds;
+      const transferStops = selectStations({
+        routePath,
+        stations: rerentableStations,
+        stopCount,
+        excludedStationIds,
+        stationPenaltyMeters: (station) =>
+          station.bikes === null ? 90 : 0,
+      });
+      if (transferStops.length !== stopCount) continue;
+
+      const stationSequence = transferStops
+        .map((station) => station.id)
+        .join(">");
+      if (triedStationSequences.has(stationSequence)) continue;
+      triedStationSequences.add(stationSequence);
+      combinationCount += 1;
+
+      for (const station of transferStops) {
+        const nextExclusions = new Set(excludedStationIds);
+        nextExclusions.add(station.id);
+        const exclusionKey = [...nextExclusions].sort().join(",");
+        if (!seenExclusionSets.has(exclusionKey)) {
+          seenExclusionSets.add(exclusionKey);
+          exclusionQueue.push(nextExclusions);
+        }
+      }
+
+      yield transferStops;
+    }
+  }
 }
 
 export async function recommendPassTransferRoute<
@@ -167,89 +239,61 @@ export async function recommendPassTransferRoute<
     Math.max(1, Math.trunc(maximumTransferStops)),
     Math.max(4, initialStopCount + 4),
   );
-  const endpointStationIds = new Set([startStationId, endStationId]);
-  // A transfer stop must support immediate re-rental. Keep unknown counts
-  // eligible, but never recommend a station confirmed at 0.
-  const transferCandidateStations = stations.filter(
-    (station) => station.bikes !== 0,
-  );
+  const candidates = transferStopCandidates({
+    routePath: baseGeometry.bike.path,
+    stations,
+    endpointStationIds: new Set([startStationId, endStationId]),
+    firstStopCount: Math.max(1, initialStopCount),
+    maximumStopCount,
+    maximumCombinationsPerStopCount,
+    selectStations,
+  });
 
-  for (
-    let stopCount = Math.max(1, initialStopCount);
-    stopCount <= maximumStopCount;
-    stopCount += 1
-  ) {
-    const exclusionQueue: Set<string>[] = [new Set(endpointStationIds)];
-    const seenExclusionSets = new Set([
-      [...endpointStationIds].sort().join(","),
-    ]);
-    const triedStationSequences = new Set<string>();
-    let combinationCount = 0;
-
-    while (
-      exclusionQueue.length > 0 &&
-      combinationCount < maximumCombinationsPerStopCount
-    ) {
-      throwIfAborted(signal);
-      const excludedStationIds =
-        exclusionQueue.shift() ?? endpointStationIds;
-      const transferStops = selectStations({
-        routePath: baseGeometry.bike.path,
-        stations: transferCandidateStations,
-        stopCount,
-        excludedStationIds,
-        stationPenaltyMeters: (station) =>
-          station.bikes === null ? 90 : station.bikes === 0 ? 25 : 0,
-      });
-      if (transferStops.length !== stopCount) continue;
-
-      const stationSequence = transferStops
-        .map((station) => station.id)
-        .join(">");
-      if (triedStationSequences.has(stationSequence)) continue;
-      triedStationSequences.add(stationSequence);
-      combinationCount += 1;
-
-      for (const station of transferStops) {
-        const nextExclusions = new Set(excludedStationIds);
-        nextExclusions.add(station.id);
-        const exclusionKey = [...nextExclusions].sort().join(",");
-        if (!seenExclusionSets.has(exclusionKey)) {
-          seenExclusionSets.add(exclusionKey);
-          exclusionQueue.push(nextExclusions);
-        }
-      }
-
-      let geometry: RouteGeometry;
-      try {
-        geometry = await loadGeometry(
-          {
-            ...baseInput,
-            transferStations: transferStops.map(
-              (station) => station.coordinates as RouteGeometryInput["startStation"],
-            ),
-          },
-          signal,
-        );
-      } catch (error: unknown) {
-        if (isAbortError(error) || signal?.aborted) throw error;
-        continue;
-      }
-      throwIfAborted(signal);
-
-      const bikeLegMinutes = geometry.bikeLegs.map(
-        (leg) => leg.durationSeconds / 60,
+  const evaluate = async (transferStops: T[]) => {
+    let geometry: RouteGeometry;
+    try {
+      geometry = await loadGeometry(
+        {
+          ...baseInput,
+          transferStations: transferStops.map(
+            (station) => station.coordinates as RouteGeometryInput["startStation"],
+          ),
+        },
+        signal,
       );
-      const allRoadLegs =
-        geometry.bike.source === "kakao" &&
-        geometry.bikeLegs.every((leg) => leg.source === "kakao");
-      if (
-        allRoadLegs &&
-        areBikeLegsWithinPassLimit(bikeLegMinutes, passType)
-      ) {
-        return { geometry, transferStops, status: "recommended" };
+    } catch (error: unknown) {
+      if (isAbortError(error) || signal?.aborted) throw error;
+      return null;
+    }
+    const bikeLegMinutes = geometry.bikeLegs.map(
+      (leg) => leg.durationSeconds / 60,
+    );
+    const allRoadLegs =
+      geometry.bike.source === "kakao" &&
+      geometry.bikeLegs.every((leg) => leg.source === "kakao");
+    return allRoadLegs && areBikeLegsWithinPassLimit(bikeLegMinutes, passType)
+      ? geometry
+      : null;
+  };
+
+  let batchSize = 1;
+  while (true) {
+    throwIfAborted(signal);
+    const batch: T[][] = [];
+    while (batch.length < batchSize) {
+      const next = candidates.next();
+      if (next.done) break;
+      batch.push(next.value);
+    }
+    if (!batch.length) break;
+    const geometries = await Promise.all(batch.map(evaluate));
+    throwIfAborted(signal);
+    for (const [index, geometry] of geometries.entries()) {
+      if (geometry) {
+        return { geometry, transferStops: batch[index], status: "recommended" };
       }
     }
+    batchSize = Math.min(batchSize * 2, MAXIMUM_CONCURRENT_CANDIDATES);
   }
 
   return { geometry: baseGeometry, transferStops: [], status: "unavailable" };

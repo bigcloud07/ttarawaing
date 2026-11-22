@@ -1,3 +1,5 @@
+import { trimKakaoRoutePayload } from "../../kakao-route-payload.ts";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -218,15 +220,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () =>
-      controller.abort(
-        new DOMException("The Kakao route request timed out.", "TimeoutError"),
-      ),
-    KAKAO_ROUTE_TIMEOUT_MS,
-  );
-
   try {
     const upstream = await fetch(buildRouteUrl(parsed.request), {
       method: "GET",
@@ -234,7 +227,10 @@ export async function POST(request: Request) {
         Accept: "application/json",
         Authorization: `KakaoAK ${restApiKey}`,
       },
-      signal: controller.signal,
+      signal: AbortSignal.any([
+        request.signal,
+        AbortSignal.timeout(KAKAO_ROUTE_TIMEOUT_MS),
+      ]),
     });
     const upstreamBody = await upstream.arrayBuffer();
     const upstreamJson = parseJsonBytes(upstreamBody);
@@ -250,7 +246,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return new Response(upstreamBody, {
+    return new Response(JSON.stringify(trimKakaoRoutePayload(upstreamJson)), {
       status: upstream.status,
       headers: {
         ...RESPONSE_HEADERS,
@@ -262,6 +258,13 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (request.signal.aborted) {
+      return errorResponse(
+        499,
+        "REQUEST_ABORTED",
+        "The route request was cancelled.",
+      );
+    }
     if (error instanceof DOMException && error.name === "TimeoutError") {
       return errorResponse(
         504,
@@ -278,7 +281,5 @@ export async function POST(request: Request) {
       "ROUTE_PROVIDER_UNAVAILABLE",
       "The route provider is temporarily unavailable.",
     );
-  } finally {
-    clearTimeout(timeoutId);
   }
 }

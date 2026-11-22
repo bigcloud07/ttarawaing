@@ -303,3 +303,39 @@ test("이미 취소된 추천은 경로 요청을 시작하지 않는다", async
   );
   assert.equal(loadCount, 0);
 });
+
+test("뒤 후보를 동시에 검증해도 탐색 순서상 먼저인 적합 후보를 고른다", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const result = await recommendPassTransferRoute({
+    baseInput,
+    passType: "60",
+    stations,
+    startStationId: "start",
+    endStationId: "end",
+    loadGeometry: async (input) => {
+      if (!input.transferStations) return makeGeometry({ totalBikeMinutes: 70 });
+      const longitude = input.transferStations[0][1];
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) =>
+        setTimeout(resolve, longitude === 127.01 ? 30 : 0),
+      );
+      inFlight -= 1;
+      return makeGeometry({
+        totalBikeMinutes: 66,
+        legMinutes: longitude === 126.99 ? [56, 10] : [33, 33],
+        transferStations: input.transferStations,
+      });
+    },
+    selectStations: ({ excludedStationIds }) =>
+      stations
+        .slice(1, 4)
+        .filter(({ id }) => !excludedStationIds.has(id))
+        .slice(0, 1),
+  });
+
+  assert.equal(result.status, "recommended");
+  assert.deepEqual(result.transferStops.map(({ id }) => id), ["secondary"]);
+  assert.equal(maxInFlight, 2);
+});
