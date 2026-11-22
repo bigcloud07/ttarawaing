@@ -1679,7 +1679,10 @@ test("normalizes the official Seoul Bike realtime station response", async () =>
     const payload = await response.json();
     assert.equal(payload.stations.length, 2_701);
     assert.deepEqual(payload.stations[0], { id: "1", availableBikes: 4 });
-    assert.match(response.headers.get("cache-control") ?? "", /max-age=20/);
+    assert.equal(
+      response.headers.get("cache-control"),
+      "public, max-age=20, s-maxage=20, stale-while-revalidate=90",
+    );
 
     const freshResponse = await worker.fetch(
       new Request("http://localhost/api/bike-stations/realtime?fresh=1"),
@@ -1695,6 +1698,42 @@ test("normalizes the official Seoul Bike realtime station response", async () =>
     assert.equal(calls, 3);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("logs the upstream status and body start when Seoul Bike answers with HTML", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const logged = [];
+  globalThis.fetch = async () =>
+    new Response(
+      "<br>\r\n<br>\r\n<center>\r\n<h2>\r\nThe request / response that are contrary to the Web firewall security policies have been blocked.\r\n</h2>",
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+  console.error = (...args) => logged.push(args.map(String).join(" "));
+
+  try {
+    const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+    workerUrl.searchParams.set("test", `bike-html-${process.pid}-${Date.now()}`);
+    const { default: worker } = await import(workerUrl.href);
+    const response = await worker.fetch(
+      new Request("http://localhost/api/bike-stations/realtime"),
+      {},
+      {
+        waitUntil() {},
+        passThroughOnException() {},
+      },
+    );
+
+    assert.equal(response.status, 502);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const line = logged.find((entry) => entry.includes("non-JSON"));
+    assert.ok(line, `missing non-JSON log in ${JSON.stringify(logged)}`);
+    assert.match(line, /status 200, content-type text\/html/);
+    assert.match(line, /<br> <br> <center> <h2> The request \/ response that are contrary to the Web firewall/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
   }
 });
 
