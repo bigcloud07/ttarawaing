@@ -116,6 +116,15 @@ export async function fetchRealtimeBikeAvailability(
     : "/api/bike-stations/realtime";
   const requests = [
     (requestSignal: AbortSignal) =>
+      fetchImpl(proxyUrl, {
+        cache: fresh ? "no-store" : "default",
+        headers: {
+          Accept: "application/json",
+          ...(fresh ? { "Cache-Control": "no-cache" } : {}),
+        },
+        signal: requestSignal,
+      }),
+    (requestSignal: AbortSignal) =>
       fetchImpl(BIKE_SEOUL_REALTIME_URL, {
         method: "POST",
         headers: {
@@ -124,15 +133,6 @@ export async function fetchRealtimeBikeAvailability(
         },
         body: new URLSearchParams({ stationGrpSeq: "ALL" }),
         cache: fresh ? "no-store" : "default",
-        signal: requestSignal,
-      }),
-    (requestSignal: AbortSignal) =>
-      fetchImpl(proxyUrl, {
-        cache: fresh ? "no-store" : "default",
-        headers: {
-          Accept: "application/json",
-          ...(fresh ? { "Cache-Control": "no-cache" } : {}),
-        },
         signal: requestSignal,
       }),
   ];

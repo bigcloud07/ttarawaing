@@ -5,6 +5,15 @@ import {
   normalizeRealtimeBikeAvailability,
 } from "../app/realtime-bikes.ts";
 
+function completeOfficialPayload(count = 2_700) {
+  return {
+    realtimeList: Array.from({ length: count }, (_, index) => ({
+      stationName: `${index + 1}. 테스트 대여소`,
+      parkingBikeTotCnt: String(index % 12),
+    })),
+  };
+}
+
 function completeStationPayload(count = 2_700) {
   return {
     stations: Array.from({ length: count }, (_, index) => ({
@@ -14,7 +23,23 @@ function completeStationPayload(count = 2_700) {
   };
 }
 
-test("공식 실시간 요청이 멈춰도 제한시간 뒤 프록시 데이터로 이어간다", async () => {
+test("프록시 응답을 먼저 쓰고 공식 서버는 호출하지 않는다", async () => {
+  const calls = [];
+  const availability = await fetchRealtimeBikeAvailability(
+    new AbortController().signal,
+    {
+      fetchImpl: async (url) => {
+        calls.push(String(url));
+        return Response.json(completeStationPayload());
+      },
+    },
+  );
+
+  assert.deepEqual(calls, ["/api/bike-stations/realtime"]);
+  assert.equal(availability.length, 2_700);
+});
+
+test("프록시 요청이 멈춰도 제한시간 뒤 공식 실시간 데이터로 이어간다", async () => {
   const calls = [];
   const availability = await fetchRealtimeBikeAvailability(
     new AbortController().signal,
@@ -23,12 +48,15 @@ test("공식 실시간 요청이 멈춰도 제한시간 뒤 프록시 데이터�
       fetchImpl: async (url) => {
         calls.push(String(url));
         if (calls.length === 1) return new Promise(() => {});
-        return Response.json(completeStationPayload());
+        return Response.json(completeOfficialPayload());
       },
     },
   );
 
-  assert.equal(calls.length, 2);
+  assert.deepEqual(calls, [
+    "/api/bike-stations/realtime",
+    "https://www.bikeseoul.com/app/station/getStationRealtimeStatus.do",
+  ]);
   assert.equal(availability.length, 2_700);
 });
 
@@ -68,17 +96,17 @@ test("사용자 새로고침은 프록시와 브라우저 캐시를 우회한다
       fresh: true,
       fetchImpl: async (url, init) => {
         calls.push({ url: String(url), init });
-        if (calls.length === 1) return Response.json({ realtimeList: [] });
-        return Response.json(completeStationPayload());
+        if (calls.length === 1) return Response.json({ stations: [] });
+        return Response.json(completeOfficialPayload());
       },
     },
   );
 
   assert.equal(availability.length, 2_700);
+  assert.equal(calls[0].url, "/api/bike-stations/realtime?fresh=1");
   assert.equal(calls[0].init?.cache, "no-store");
-  assert.equal(calls[1].url, "/api/bike-stations/realtime?fresh=1");
+  assert.equal(calls[0].init?.headers["Cache-Control"], "no-cache");
   assert.equal(calls[1].init?.cache, "no-store");
-  assert.equal(calls[1].init?.headers["Cache-Control"], "no-cache");
 });
 
 test("공식 응답의 일반·QR·새싹 따릉이 수를 합산하고 0대도 보존한다", () => {
