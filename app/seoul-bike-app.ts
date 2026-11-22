@@ -1,3 +1,5 @@
+import { isTtarawaingIOS } from "./native-app.ts";
+
 export const SEOUL_BIKE_APP_URL = "bikeseoul://action";
 export const SEOUL_BIKE_PLAY_STORE_URL =
   "https://play.google.com/store/apps/details?id=com.dki.spb_android";
@@ -33,6 +35,11 @@ export function startSeoulBikeRental(
   browser: Window,
   showInstallGuide: () => void,
 ): () => void {
+  if (isTtarawaingIOS(browser.navigator.userAgent)) {
+    browser.location.assign(SEOUL_BIKE_APP_URL);
+    return () => {};
+  }
+
   if (getSeoulBikeAppLinks(browser.navigator).app === SEOUL_BIKE_APP_URL) {
     showInstallGuide();
     return () => {};

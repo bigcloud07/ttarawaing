@@ -1067,7 +1067,7 @@ test("focuses the map when each route timeline place is selected", async () => {
   assert.match(styles, /button:focus-visible,[\s\S]*?outline:\s*3px solid/);
 });
 
-test("scrolls and focuses the recommendation after the primary route search", async () => {
+test("shows the map first on mobile and the recommendation on desktop after search", async () => {
   const [pageSource, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -1079,6 +1079,8 @@ test("scrolls and focuses the recommendation after the primary route search", as
     /if \(!commitRoute\(undefined, undefined, \{ analyticsSource: "form" \}\)\) return/,
   );
   assert.match(pageSource, /pendingResultFocusRef\.current = true/);
+  assert.match(pageSource, /const resultSection = window\.matchMedia\("\(max-width: 900px\)"\)\.matches\s*\? mapPanelRef\.current\s*: resultSectionRef\.current/);
+  assert.match(pageSource, /ref=\{mapPanelRef\}\s+tabIndex=\{-1\}/);
   assert.match(pageSource, /ref=\{resultSectionRef\}/);
   assert.match(pageSource, /tabIndex=\{-1\}/);
   assert.match(pageSource, /resultSection\.focus\(\{ preventScroll: true \}\)/);
@@ -1694,4 +1696,12 @@ test("normalizes the official Seoul Bike realtime station response", async () =>
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+
+test("provides an app result back link that resets the route and returns home", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /plan \|\| nearbyStationResult \? \(\s*<nav className="app-result-navigation"/);
+  assert.match(source, /className="app-result-navigation"[\s\S]*?<Link href="\/" onClick=\{returnToHome\}/);
+  assert.match(source, /const returnToHome[\s\S]*?resetRoute\(false\)[\s\S]*?window\.scrollTo\(\{ top: 0, behavior: "auto" \}\)/);
 });

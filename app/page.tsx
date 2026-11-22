@@ -2,6 +2,7 @@
 
 import {
   ArrowDownUp,
+  ArrowLeft,
   ArrowRight,
   AlertTriangle,
   Bike,
@@ -96,6 +97,7 @@ import {
   SEOUL_BIKE_APP_STORE_URL,
   SEOUL_BIKE_INSTALL_GUIDE_URL,
 } from "./seoul-bike-app";
+
 import {
   createLatestRequestGate,
   requestCurrentPositionOnce,
@@ -3415,7 +3417,9 @@ export default function Home() {
     if (!plan || !pendingResultFocusRef.current) return;
 
     const frameId = window.requestAnimationFrame(() => {
-      const resultSection = resultSectionRef.current;
+      const resultSection = window.matchMedia("(max-width: 900px)").matches
+        ? mapPanelRef.current
+        : resultSectionRef.current;
       if (!resultSection || !pendingResultFocusRef.current) return;
       pendingResultFocusRef.current = false;
       const reduceMotion = window.matchMedia(
@@ -4318,6 +4322,14 @@ export default function Home() {
 
   return (
     <main className="app-shell">
+      {plan || nearbyStationResult ? (
+        <nav className="app-result-navigation" aria-label="앱 탐색">
+          <Link href="/" onClick={returnToHome}>
+            <ArrowLeft size={20} aria-hidden="true" />
+            <span>뒤로</span>
+          </Link>
+        </nav>
+      ) : null}
       <header className="topbar">
         <Link
           className="brand"
@@ -5010,6 +5022,7 @@ export default function Home() {
 
         <section
           ref={mapPanelRef}
+          tabIndex={-1}
           className={`map-panel${
             plan || nearbyStationResult ? "" : " is-empty"
           }`}

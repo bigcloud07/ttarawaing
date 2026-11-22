@@ -2881,3 +2881,19 @@ input:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+.app-result-navigation {
+  display: none;
+}
+
+.app-result-navigation a {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 16px;
+  font-weight: 600;
+}
