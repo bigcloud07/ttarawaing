@@ -2,6 +2,7 @@
 
 import { Bike, Crosshair, House, X } from "lucide-react";
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -30,6 +31,8 @@ import {
   useHeadingAwareMapTouchStart,
   useHeadingUpMapCanvas,
 } from "./map-location-ui";
+import { useMapLivePosition } from "./map-live-position";
+import type { MapLivePositionStore } from "./map-live-position";
 import type {
   MapHeadingStatus,
   MapLocationMode,
@@ -55,8 +58,7 @@ export type NearbyStationMapProps = {
   availability: NearbyStationAvailability;
   adjustedForAvailability: boolean;
   warning?: string;
-  userLocation: Coordinates | null;
-  userHeading: number | null;
+  livePosition: MapLivePositionStore;
   locationFocusRequestId: number;
   tryConsumeLocationFocusRequest: (requestId: number) => boolean;
   locationStatus: MapLocationStatus;
@@ -76,8 +78,6 @@ type MapCanvasProps = Pick<
   | "userCoordinates"
   | "station"
   | "segment"
-  | "userLocation"
-  | "userHeading"
   | "locationFocusRequestId"
   | "tryConsumeLocationFocusRequest"
   | "locationMode"
@@ -85,6 +85,8 @@ type MapCanvasProps = Pick<
   | "onMapTouchDragStart"
   | "onMapTouchDragEnd"
 > & {
+  userLocation: Coordinates | null;
+  userHeading: number | null;
   refocusRequestId: number;
   onRefocus: () => void;
 };
@@ -1051,7 +1053,7 @@ function NearbyMapLocationControl({
   );
 }
 
-export function NearbyStationMap({
+export const NearbyStationMap = memo(function NearbyStationMap({
   kind,
   userCoordinates,
   station,
@@ -1059,8 +1061,7 @@ export function NearbyStationMap({
   availability,
   adjustedForAvailability,
   warning,
-  userLocation,
-  userHeading,
+  livePosition,
   locationFocusRequestId,
   tryConsumeLocationFocusRequest,
   locationStatus,
@@ -1073,6 +1074,10 @@ export function NearbyStationMap({
   onClose,
   onRefocus,
 }: NearbyStationMapProps) {
+  const { userLocation, userHeading } = useMapLivePosition(
+    livePosition,
+    locationMode,
+  );
   const [provider, setProvider] = useState<MapProvider>("loading");
   const [refocusRequestId, setRefocusRequestId] = useState(0);
 
@@ -1180,6 +1185,6 @@ export function NearbyStationMap({
       />
     </div>
   );
-}
+});
 
 export default NearbyStationMap;

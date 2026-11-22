@@ -1200,7 +1200,7 @@ test("minimizes mobile details on map drag without animating the handle", async 
   assert.match(mapDragHandler, /minimizeMobileDetailsFromMapDrag\(\)/);
   assert.match(mapDragHandler, /leaveMapHeadingMode\(\)/);
   assert.doesNotMatch(mapDragHandler, /stopMapLocationTracking/);
-  assert.doesNotMatch(mapDragHandler, /setMapUserLocation/);
+  assert.doesNotMatch(mapDragHandler, /mapLivePosition/);
   assert.match(locationUiSource, /node\.style\.transition = "none"/);
   assert.match(locationUiSource, /flushSync\(onInteractionStart\)/);
   assert.match(
@@ -1426,12 +1426,15 @@ test("arbitrates touch drag and pinch before changing heading mode", async () =>
   assert.match(leaveHeadingHandler, /teardownMapOrientation\(\)/);
   assert.match(leaveHeadingHandler, /setMapLocationMode\("tracking"\)/);
   assert.match(leaveHeadingHandler, /setMapHeadingStatus\("idle"\)/);
-  assert.match(leaveHeadingHandler, /setMapDeviceHeading\(null\)/);
+  assert.match(
+    leaveHeadingHandler,
+    /mapLivePosition\.set\(\{ deviceHeading: null \}\)/,
+  );
   assert.doesNotMatch(leaveHeadingHandler, /minimizeMobileDetailsFromMapDrag/);
   assert.doesNotMatch(leaveHeadingHandler, /stopMapLocationTracking/);
   assert.doesNotMatch(leaveHeadingHandler, /clearWatch/);
-  assert.doesNotMatch(leaveHeadingHandler, /setMapUserLocation/);
-  assert.doesNotMatch(leaveHeadingHandler, /setMapTravelHeading/);
+  assert.doesNotMatch(leaveHeadingHandler, /location:/);
+  assert.doesNotMatch(leaveHeadingHandler, /travelHeading/);
 });
 
 test("keeps the mobile heading-up camera centered through map relayout", async () => {

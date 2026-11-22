@@ -21,6 +21,7 @@ import {
 import Link from "next/link";
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -115,6 +116,11 @@ import {
   useHeadingAwareMapTouchStart,
   useHeadingUpMapCanvas,
 } from "./map-location-ui";
+import {
+  createMapLivePositionStore,
+  useMapLivePosition,
+} from "./map-live-position";
+import type { MapLivePositionStore } from "./map-live-position";
 import type {
   MapHeadingStatus,
   MapLocationMode,
@@ -2687,7 +2693,7 @@ function KakaoRouteMap({
   );
 }
 
-function RouteMap({
+const RouteMap = memo(function RouteMap({
   plan,
   nextRouteLeg,
   geometry,
@@ -2696,8 +2702,7 @@ function RouteMap({
   focusRequest,
   nearbyStationResult,
   nearbyStationFocusRequestId,
-  userLocation,
-  userHeading,
+  livePosition,
   locationFocusRequestId,
   tryConsumeLocationFocusRequest,
   locationStatus,
@@ -2722,8 +2727,7 @@ function RouteMap({
   focusRequest: MapFocusRequest | null;
   nearbyStationResult: NearbyStationDisplayResult | null;
   nearbyStationFocusRequestId: number;
-  userLocation: Coordinates | null;
-  userHeading: number | null;
+  livePosition: MapLivePositionStore;
   locationFocusRequestId: number;
   tryConsumeLocationFocusRequest: (requestId: number) => boolean;
   locationStatus: MapLocationStatus;
@@ -2740,6 +2744,10 @@ function RouteMap({
   onEndpointDragStart: () => void;
   onEndpointMove: RouteEndpointMoveHandler;
 }) {
+  const { userLocation, userHeading } = useMapLivePosition(
+    livePosition,
+    locationMode,
+  );
   const [provider, setProvider] = useState<"loading" | "kakao" | "leaflet">("loading");
   const useLeafletFallback = useCallback(() => setProvider("leaflet"), []);
 
@@ -2839,7 +2847,7 @@ function RouteMap({
       />
     </div>
   );
-}
+});
 
 export default function Home() {
   const [originQuery, setOriginQuery] = useState("");
@@ -2885,7 +2893,7 @@ export default function Home() {
   const [mapFocusRequest, setMapFocusRequest] = useState<MapFocusRequest | null>(
     null,
   );
-  const [mapUserLocation, setMapUserLocation] = useState<Coordinates | null>(null);
+  const [mapLivePosition] = useState(createMapLivePositionStore);
   const [routeProgressState, setRouteProgressState] = useState(() =>
     createRouteProgressState("no-route"),
   );
@@ -2911,8 +2919,6 @@ export default function Home() {
   const mapHandledLocationFocusRequestIdRef = useRef(0);
   const [mapHeadingStatus, setMapHeadingStatus] =
     useState<MapHeadingStatus>("idle");
-  const [mapDeviceHeading, setMapDeviceHeading] = useState<number | null>(null);
-  const [mapTravelHeading, setMapTravelHeading] = useState<number | null>(null);
   const mapLocationRequestIdRef = useRef(0);
   const mapLocationWatchIdRef = useRef<number | null>(null);
   const mapOrientationCleanupRef = useRef<(() => void) | null>(null);
@@ -3627,12 +3633,14 @@ export default function Home() {
       setMapLocationMode("idle");
       setMapLocationStatus("idle");
       setMapHeadingStatus("idle");
-      setMapDeviceHeading(null);
-      setMapTravelHeading(null);
+      mapLivePosition.set({
+        deviceHeading: null,
+        travelHeading: null,
+        ...(clearMarker ? { location: null } : {}),
+      });
       mapHasLocationFixRef.current = false;
-      if (clearMarker) setMapUserLocation(null);
     },
-    [teardownMapOrientation],
+    [mapLivePosition, teardownMapOrientation],
   );
 
   const leaveMapHeadingMode = useCallback(() => {
@@ -3640,8 +3648,8 @@ export default function Home() {
     teardownMapOrientation();
     setMapLocationMode("tracking");
     setMapHeadingStatus("idle");
-    setMapDeviceHeading(null);
-  }, [teardownMapOrientation]);
+    mapLivePosition.set({ deviceHeading: null });
+  }, [mapLivePosition, teardownMapOrientation]);
 
   const handleMapDragStart = useCallback(() => {
     minimizeMobileDetailsFromMapDrag();
@@ -3662,6 +3670,11 @@ export default function Home() {
     stopMapLocationTracking(true);
     setMapFocusRequest(null);
   }, [minimizeMobileDetailsFromMapDrag, stopMapLocationTracking]);
+
+  const commitRouteRef = useRef(commitRoute);
+  useLayoutEffect(() => {
+    commitRouteRef.current = commitRoute;
+  }, [commitRoute]);
 
   const moveRouteEndpoint = useCallback<RouteEndpointMoveHandler>(
     async (endpoint, coordinates) => {
@@ -3719,7 +3732,7 @@ export default function Home() {
         endpoint === "origin" ? movedPlace : currentRoute.origin;
       const nextDestination =
         endpoint === "destination" ? movedPlace : currentRoute.destination;
-      const committed = commitRoute(nextOrigin, nextDestination, {
+      const committed = commitRouteRef.current(nextOrigin, nextDestination, {
         remember: false,
         expandMobileDetails: false,
         preserveEndpointMoveRequests: true,
@@ -3738,7 +3751,7 @@ export default function Home() {
       );
       return true;
     },
-    [commitRoute, showNotice],
+    [showNotice],
   );
 
   useEffect(
@@ -3774,8 +3787,7 @@ export default function Home() {
     setMapLocationMode("tracking");
     setMapLocationStatus("loading");
     setMapHeadingStatus("idle");
-    setMapDeviceHeading(null);
-    setMapTravelHeading(null);
+    mapLivePosition.set({ deviceHeading: null, travelHeading: null });
     mapHasLocationFixRef.current = false;
 
     try {
@@ -3787,10 +3799,10 @@ export default function Home() {
             (position.coords.speed === null || position.coords.speed >= 0.8)
               ? normalizeHeading(Number(position.coords.heading))
               : null;
-          setMapUserLocation([
-            position.coords.latitude,
-            position.coords.longitude,
-          ]);
+          mapLivePosition.set({
+            location: [position.coords.latitude, position.coords.longitude],
+            travelHeading,
+          });
           const routeFix: RouteLocationFix = {
             coordinates: [
               position.coords.latitude,
@@ -3809,7 +3821,6 @@ export default function Home() {
               enabled: progressConfig.enabled,
             }),
           );
-          setMapTravelHeading(travelHeading);
           setMapLocationStatus("ready");
           mapHasLocationFixRef.current = true;
         },
@@ -3829,9 +3840,11 @@ export default function Home() {
           setMapLocationMode("idle");
           setMapLocationStatus("error");
           setMapHeadingStatus("idle");
-          setMapDeviceHeading(null);
-          setMapTravelHeading(null);
-          setMapUserLocation(null);
+          mapLivePosition.set({
+            location: null,
+            deviceHeading: null,
+            travelHeading: null,
+          });
           mapHasLocationFixRef.current = false;
         },
         { enableHighAccuracy: true, timeout: 15_000, maximumAge: 2_000 },
@@ -3839,10 +3852,10 @@ export default function Home() {
     } catch {
       setMapLocationMode("idle");
       setMapLocationStatus("error");
-      setMapUserLocation(null);
+      mapLivePosition.set({ location: null });
       mapHasLocationFixRef.current = false;
     }
-  }, [teardownMapOrientation]);
+  }, [mapLivePosition, teardownMapOrientation]);
 
   const tryConsumeMapLocationFocusRequest = useCallback(
     (requestId: number) => {
@@ -3885,13 +3898,17 @@ export default function Home() {
 
     if (mapLocationRequestIdRef.current !== requestId) return;
     teardownMapOrientation();
+    let headingActive = false;
     const queueHeading = (heading: number | null) => {
       if (heading === null) return;
       if (mapHeadingFallbackTimerRef.current !== null) {
         window.clearTimeout(mapHeadingFallbackTimerRef.current);
         mapHeadingFallbackTimerRef.current = null;
       }
-      setMapHeadingStatus("active");
+      if (!headingActive) {
+        headingActive = true;
+        setMapHeadingStatus("active");
+      }
       mapPendingHeadingRef.current = heading;
       if (mapHeadingTimerRef.current !== null) return;
       mapHeadingTimerRef.current = window.setTimeout(() => {
@@ -3910,7 +3927,7 @@ export default function Home() {
             ? nextHeading
             : normalizeHeading(previousHeading + delta * 0.28);
         mapLastHeadingRef.current = smoothedHeading;
-        setMapDeviceHeading(smoothedHeading);
+        mapLivePosition.set({ deviceHeading: smoothedHeading });
       }, 80);
     };
     const handleAbsoluteOrientation = (event: Event) => {
@@ -3941,7 +3958,7 @@ export default function Home() {
         setMapHeadingStatus("fallback");
       }
     }, 1_500);
-  }, [teardownMapOrientation]);
+  }, [mapLivePosition, teardownMapOrientation]);
 
   const locateMapUser = useCallback(() => {
     if (mapLocationMode === "idle" || mapLocationStatus === "error") {
@@ -3974,7 +3991,7 @@ export default function Home() {
     (coordinates: Coordinates, preserveLocationTracking = false) => {
       cancelNearbyStationLookup();
       if (!preserveLocationTracking) stopMapLocationTracking(true);
-      if (!preserveLocationTracking) setMapUserLocation(null);
+      if (!preserveLocationTracking) mapLivePosition.set({ location: null });
       setMapFocusRequest((currentRequest) => ({
         coordinates: [coordinates[0], coordinates[1]],
         requestId: (currentRequest?.requestId ?? 0) + 1,
@@ -3991,7 +4008,7 @@ export default function Home() {
         });
       }
     },
-    [cancelNearbyStationLookup, stopMapLocationTracking],
+    [cancelNearbyStationLookup, mapLivePosition, stopMapLocationTracking],
   );
 
   const focusMapPoint = useCallback(
@@ -4190,7 +4207,7 @@ export default function Home() {
             ),
           });
 
-          setMapUserLocation(currentLocation);
+          mapLivePosition.set({ location: currentLocation });
           setMapFocusRequest(null);
           setNearbyStationResult({
             kind,
@@ -4275,6 +4292,7 @@ export default function Home() {
       liveBikeStatus,
       applyRealtimeStations,
       fetchRealtimeStations,
+      mapLivePosition,
       preferBikeRoads,
       scrollToMobileMap,
       stopMapLocationTracking,
@@ -4326,11 +4344,6 @@ export default function Home() {
     window.history.replaceState(null, "", "/");
     window.scrollTo({ top: 0, behavior: "auto" });
   };
-
-  const mapUserHeading =
-    mapLocationMode === "heading"
-      ? (mapDeviceHeading ?? mapTravelHeading)
-      : null;
 
   return (
     <main className="app-shell">
@@ -5056,8 +5069,7 @@ export default function Home() {
               focusRequest={mapFocusRequest}
               nearbyStationResult={nearbyStationResult}
               nearbyStationFocusRequestId={nearbyStationFocusRequestId}
-              userLocation={mapUserLocation}
-              userHeading={mapUserHeading}
+              livePosition={mapLivePosition}
               locationFocusRequestId={mapLocationFocusRequestId}
               tryConsumeLocationFocusRequest={
                 tryConsumeMapLocationFocusRequest
@@ -5087,8 +5099,7 @@ export default function Home() {
                 nearbyStationResult.adjustedForAvailability
               }
               warning={nearbyStationResult.warning}
-              userLocation={mapUserLocation}
-              userHeading={mapUserHeading}
+              livePosition={mapLivePosition}
               locationFocusRequestId={mapLocationFocusRequestId}
               tryConsumeLocationFocusRequest={
                 tryConsumeMapLocationFocusRequest
