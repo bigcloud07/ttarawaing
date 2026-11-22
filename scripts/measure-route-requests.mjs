@@ -190,6 +190,7 @@ async function restoredLaunchScenario() {
 
 const results = [
   await searchScenario("1시간권 across Seoul", 4.2),
+  await searchScenario("1시간권 across Seoul, early candidates miss", 4.0),
   await searchScenario("1시간권 across Seoul, no candidate fits", 1.5),
   await restoredLaunchScenario(),
 ];
